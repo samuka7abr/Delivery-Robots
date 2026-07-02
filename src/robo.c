@@ -19,8 +19,10 @@ bool robo_inicializar(Robo *robo, int id, TipoRobo tipo, Posicao inicial, Mapa *
 
 bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy)
 {
-    /* movimento é célula a célula: no máximo um passo em cada eixo */
-    if (dx < -1 || dx > 1 || dy < -1 || dy > 1 || (dx == 0 && dy == 0)) {
+    /* movimento é célula a célula, um eixo por vez: sem diagonal */
+    bool passo_valido = (dx == 0 && (dy == 1 || dy == -1)) ||
+                         (dy == 0 && (dx == 1 || dx == -1));
+    if (!passo_valido) {
         return false;
     }
 
