@@ -4,11 +4,13 @@
 #include "idp.h"
 
 /* Cria o mapa (largura x altura) com todas as células livres e sem ocupação.
- * Aloca as matrizes de tipo e de ocupação e inicializa o mutex do mapa.
+ * Aloca as matrizes de tipo e de ocupação. O mutex do mapa não é
+ * inicializado aqui — fica pra Issue #9, quando threads entram em cena.
  * Retorna NULL em caso de falha de alocação. */
 Mapa *mapa_criar(int largura, int altura);
 
-/* Libera as matrizes do mapa, destrói o mutex e libera a própria struct. */
+/* Libera as matrizes do mapa e a própria struct. Não mexe no mutex, que
+ * ainda não foi inicializado nesta etapa sequencial (ver Issue #9). */
 void mapa_destruir(Mapa *mapa);
 
 /* Define o tipo fixo de uma célula (parede, estação P, ponto D, livre). */
