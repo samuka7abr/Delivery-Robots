@@ -1,0 +1,20 @@
+name: Require issue link
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  check-issue-link:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify PR description references an issue
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if echo "$PR_BODY" | grep -Eiq '(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)[[:space:]]+#[0-9]+'; then
+            echo "OK: PR referencia uma issue."
+          else
+            echo "::error::A descrição do PR precisa referenciar a issue que ela resolve, ex.: 'Closes #12'."
+            exit 1
+          fi
