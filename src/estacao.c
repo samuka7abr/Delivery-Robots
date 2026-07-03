@@ -17,7 +17,7 @@ bool estacao_fila_vazia(const Estacao *estacao)
 
 bool estacao_fila_cheia(const Estacao *estacao)
 {
-    return estacao->total == MAX_ESTEIRA;
+    return estacao->total == MAX_FILA_ESTACAO;
 }
 
 bool estacao_enfileirar(Estacao *estacao, Pacote *pacote)
@@ -26,7 +26,7 @@ bool estacao_enfileirar(Estacao *estacao, Pacote *pacote)
         return false;
     }
     estacao->fila[estacao->fim] = pacote;
-    estacao->fim = (estacao->fim + 1) % MAX_ESTEIRA;
+    estacao->fim = (estacao->fim + 1) % MAX_FILA_ESTACAO;
     estacao->total++;
     return true;
 }
@@ -37,7 +37,7 @@ Pacote *estacao_desenfileirar(Estacao *estacao)
         return NULL;
     }
     Pacote *pacote = estacao->fila[estacao->inicio];
-    estacao->inicio = (estacao->inicio + 1) % MAX_ESTEIRA;
+    estacao->inicio = (estacao->inicio + 1) % MAX_FILA_ESTACAO;
     estacao->total--;
     return pacote;
 }

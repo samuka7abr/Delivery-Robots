@@ -11,11 +11,12 @@
  * contadores (aguardando, na esteira, entregues, tempo) ficam num mutex so.
  * interface le tudo isso direto, sem trava nova. */
 
-#define MAX_ROBOS    16
-#define MAX_ESTACOES 8
-#define MAX_PONTOS_D 8
-#define MAX_ESTEIRA  32
-#define MAX_PACOTES  128
+#define MAX_ROBOS        16
+#define MAX_ESTACOES     8
+#define MAX_PONTOS_D     8
+#define MAX_ESTEIRA      32
+#define MAX_FILA_ESTACAO 32
+#define MAX_PACOTES      128
 
 typedef struct {
     int x;
@@ -51,10 +52,12 @@ typedef struct {
     int estacao_origem;
 } Pacote;
 
-/* Estação geradora de pacotes (ponto P): fila FIFO de pacotes aguardando coleta */
+/* Estação geradora de pacotes (ponto P): fila FIFO limitada de pacotes
+ * aguardando coleta. A capacidade é MAX_FILA_ESTACAO (backpressure: fila
+ * cheia faz o gerador tentar outra estação ou esperar coleta). */
 typedef struct {
     Posicao posicao;
-    Pacote *fila[MAX_ESTEIRA];
+    Pacote *fila[MAX_FILA_ESTACAO];
     int inicio;
     int fim;
     int total;
