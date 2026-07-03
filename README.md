@@ -14,7 +14,7 @@ Trabalho prático de Programação Concorrente (IDP) — simulação de um centr
 make
 ```
 
-Gera o executável `idp` na raiz do projeto.
+Gera o executável em `build/idp`.
 
 ## Execução
 
@@ -22,10 +22,16 @@ Gera o executável `idp` na raiz do projeto.
 make run
 ```
 
-ou diretamente:
+ou diretamente, escolhendo o cenário (0 a 2):
 
 ```bash
-./idp
+./build/idp 1
+```
+
+## Testes
+
+```bash
+make test
 ```
 
 ## Limpeza
@@ -36,5 +42,8 @@ make clean
 
 ## Estrutura do projeto
 
-- `src/` — código-fonte em C
+- `include/` — headers (contratos dos módulos)
+- `src/` — implementação em C
+- `build/` — saída da compilação (objetos e executável)
+- `tests/` — testes dos módulos
 - `docs/` — documentação do trabalho e materiais de apoio
