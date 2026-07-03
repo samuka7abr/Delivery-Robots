@@ -16,7 +16,8 @@ bool gerador_inicializar(Gerador *gerador, const Cenario *cenario,
             1,
             (i + 1) * cenario->altura_mapa / (cenario->num_estacoes + 1),
         };
-        if (!mapa_dentro_limites(mapa, p)) {
+        if (!mapa_dentro_limites(mapa, p) ||
+            mapa->celulas[p.y][p.x] != CELULA_LIVRE) {
             return false;
         }
         estacao_inicializar(&estacoes[i], p);
