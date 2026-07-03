@@ -1,5 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -g -Iinclude -MMD -MP
+LDLIBS = -lncurses
 
 SRC = $(wildcard src/*.c)
 OBJ = $(patsubst src/%.c,build/%.o,$(SRC))
@@ -15,13 +16,13 @@ TEST_BIN = $(patsubst tests/%.c,build/%,$(TEST_SRC))
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $(OBJ)
+	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
 build/%.o: src/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/%: tests/%.c $(MODULOS) | build
-	$(CC) $(CFLAGS) -o $@ $< $(MODULOS)
+	$(CC) $(CFLAGS) -o $@ $< $(MODULOS) $(LDLIBS)
 
 build:
 	mkdir -p build

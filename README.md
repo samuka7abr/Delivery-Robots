@@ -7,6 +7,7 @@ Trabalho prático de Programação Concorrente (IDP) — simulação de um centr
 - Linux (testado em Ubuntu 24.04)
 - gcc
 - make
+- libncurses-dev (interface de acompanhamento)
 
 ## Build
 

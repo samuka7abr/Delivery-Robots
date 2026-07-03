@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <time.h>
 
 #include "idp.h"
 #include "cenario.h"
@@ -8,27 +10,74 @@
 #include "gerador.h"
 #include "esteira.h"
 #include "coletor.h"
+#include "robo.h"
+#include "interface.h"
 
-/* Render textual provisório (a interface real é a Issue #10). */
-static char celula_char(TipoCelula tipo)
+static double agora_seg(void)
 {
-    switch (tipo) {
-        case CELULA_PAREDE:    return '#';
-        case CELULA_ESTACAO_P: return 'P';
-        case CELULA_PONTO_D:   return 'D';
-        case CELULA_LIVRE:
-        default:               return '.';
-    }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
-static void imprimir_mapa(const Mapa *mapa)
+/* Um tick sequencial: gera um pacote, cada coletor dá um passo do seu ciclo e a
+ * esteira avança. Retorna true se houve algum progresso no tick. */
+static bool simulacao_passo(Gerador *gerador, Coletor *coletores, int num_coletores,
+                            Mapa *mapa, Estacao *estacoes, int num_estacoes,
+                            Esteira *esteira)
 {
-    for (int y = 0; y < mapa->altura; y++) {
-        for (int x = 0; x < mapa->largura; x++) {
-            putchar(celula_char(mapa->celulas[y][x]));
-        }
-        putchar('\n');
+    bool progresso = false;
+
+    if (gerador_gerar(gerador, NULL) == GERACAO_OK) {
+        progresso = true;
     }
+    for (int i = 0; i < num_coletores; i++) {
+        ResultadoColeta r = coletor_passo(&coletores[i], mapa, estacoes,
+                                          num_estacoes, esteira);
+        if (r == COLETA_INSERIU || r == COLETA_ANDANDO || r == COLETA_COLETOU) {
+            progresso = true;
+        }
+    }
+    esteira_avancar(esteira);
+    return progresso;
+}
+
+static void coletar_estatisticas(Estatisticas *stats, const Estacao *estacoes,
+                                 int num_estacoes, const Esteira *esteira,
+                                 int entregues, double tempo)
+{
+    int aguardando = 0;
+    for (int i = 0; i < num_estacoes; i++) {
+        aguardando += estacoes[i].total;
+    }
+    stats->pacotes_aguardando = aguardando;
+    stats->pacotes_na_esteira = esteira_total(esteira);
+    stats->pacotes_entregues = entregues;
+    stats->tempo_execucao_seg = tempo;
+}
+
+/* Um único frame em texto, com todos os elementos da interface. Usado quando
+ * não há terminal interativo (ex.: testes/CI), onde o modo ncurses não roda. */
+static void imprimir_frame_texto(int indice, const Cenario *cenario, const Mapa *mapa,
+                                 const Robo *robos, int num_robos,
+                                 const Esteira *esteira, const Estatisticas *stats)
+{
+    /* comporta o maior mapa dos cenários (40x20 -> 821 bytes com quebras) */
+    char mapa_txt[4096];
+    char belt[3 + MAX_ESTEIRA + 4 + 1];
+
+    printf("Cenário %d — mapa %dx%d\n\n", indice,
+           cenario->largura_mapa, cenario->altura_mapa);
+    if (interface_compor_mapa(mapa, robos, num_robos, mapa_txt, sizeof mapa_txt) > 0) {
+        fputs(mapa_txt, stdout);
+    }
+    if (interface_compor_esteira(esteira, belt, sizeof belt) > 0) {
+        printf("\nEsteira: %s\n", belt);
+    }
+    printf("\nPacotes aguardando coleta : %d\n", stats->pacotes_aguardando);
+    printf("Pacotes na esteira        : %d\n", stats->pacotes_na_esteira);
+    printf("Pacotes entregues         : %d\n", stats->pacotes_entregues);
+    printf("Tempo de execucao (s)     : %.1f\n", stats->tempo_execucao_seg);
 }
 
 int main(int argc, char **argv)
@@ -69,78 +118,74 @@ int main(int argc, char **argv)
     Robo robos[MAX_ROBOS];
     Coletor coletores[MAX_ROBOS];
     int num_coletores = cenario->num_robos_coletores;
+    int total_robos = 0;
     for (int i = 0; i < num_coletores; i++) {
         Posicao inicial = { cenario->largura_mapa - 2, 1 + i };
-        if (!robo_inicializar(&robos[i], i, ROBO_COLETOR, inicial, mapa)) {
+        if (!robo_inicializar(&robos[total_robos], i, ROBO_COLETOR, inicial, mapa)) {
             fprintf(stderr, "falha ao posicionar o coletor %d\n", i);
             mapa_destruir(mapa);
             return 1;
         }
-        coletor_inicializar(&coletores[i], &robos[i], entrada);
+        coletor_inicializar(&coletores[i], &robos[total_robos], entrada);
+        total_robos++;
     }
 
-    printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, "
-           "esteira %d, %d pacotes\n\n",
-           indice, cenario->largura_mapa, cenario->altura_mapa,
-           cenario->num_estacoes, num_coletores, cenario->tamanho_esteira,
-           cenario->total_pacotes);
-
-    /* laço sequencial: a cada tick gera um pacote, cada coletor dá um passo do
-     * seu ciclo e a esteira avança. Sem entregadores drenando o out (Issue #8),
-     * o fluxo estanca quando a esteira enche — o laço encerra ao não haver mais
-     * progresso (nada gerado e nenhum coletor andando/coletando/inserindo). */
-    int inseridos = 0;
-    int ticks = 0;
-    const int ticks_max = 20000;
-    while (ticks < ticks_max) {
-        bool progresso = false;
-
-        if (gerador_gerar(&gerador, NULL) == GERACAO_OK) {
-            progresso = true;
+    /* Pontos de despacho e robôs entregadores são posicionados de forma
+     * estática só para a interface exibir a área de expedição — o ciclo dos
+     * entregadores é da Issue #8 e a integração com threads da #9. A interface
+     * pode trabalhar com dados mockados nesta etapa (ver corpo da Issue #10). */
+    int num_pontos = cenario->num_pontos_despacho;
+    for (int i = 0; i < num_pontos; i++) {
+        mapa_definir_tipo(mapa, (Posicao){ cenario->largura_mapa - 3, 2 + i },
+                          CELULA_PONTO_D);
+    }
+    int num_entregadores = cenario->num_robos_entregadores;
+    for (int i = 0; i < num_entregadores; i++) {
+        Posicao inicial = { cenario->largura_mapa - 5, 2 + i };
+        if (robo_inicializar(&robos[total_robos], num_coletores + i,
+                             ROBO_ENTREGADOR, inicial, mapa)) {
+            total_robos++;
         }
+    }
 
-        for (int i = 0; i < num_coletores; i++) {
-            ResultadoColeta r = coletor_passo(&coletores[i], mapa, estacoes,
-                                              cenario->num_estacoes, &esteira);
-            if (r == COLETA_INSERIU) {
-                inseridos++;
-                progresso = true;
-            } else if (r == COLETA_ANDANDO || r == COLETA_COLETOU) {
-                progresso = true;
+    Estatisticas stats = {
+        .pacotes_aguardando = 0,
+        .pacotes_na_esteira = 0,
+        .pacotes_entregues = 0,
+        .tempo_execucao_seg = 0.0,
+    };
+    int entregues = 0;   /* mockado até os entregadores (#8) drenarem o out */
+    double t0 = agora_seg();
+
+    if (isatty(STDOUT_FILENO)) {
+        interface_iniciar();
+        bool ativo = true;
+        while (true) {
+            if (ativo && !simulacao_passo(&gerador, coletores, num_coletores, mapa,
+                                          estacoes, cenario->num_estacoes, &esteira)) {
+                ativo = false;   /* fluxo estanca sem os entregadores (#8) */
             }
+            coletar_estatisticas(&stats, estacoes, cenario->num_estacoes,
+                                 &esteira, entregues, agora_seg() - t0);
+            interface_desenhar(mapa, robos, total_robos, &esteira, &stats);
+            if (interface_tecla_sair()) {
+                break;
+            }
+            usleep(80000);
         }
-
-        esteira_avancar(&esteira);
-        ticks++;
-
-        if (!progresso) {
-            break;
+        interface_encerrar();
+    } else {
+        int ticks = 0;
+        const int ticks_max = 20000;
+        while (ticks < ticks_max &&
+               simulacao_passo(&gerador, coletores, num_coletores, mapa, estacoes,
+                               cenario->num_estacoes, &esteira)) {
+            ticks++;
         }
-    }
-
-    imprimir_mapa(mapa);
-
-    int carregando = 0;
-    for (int i = 0; i < num_coletores; i++) {
-        if (robos[i].pacote_atual != NULL) {
-            carregando++;
-        }
-    }
-    int aguardando = 0;
-    for (int i = 0; i < cenario->num_estacoes; i++) {
-        aguardando += estacoes[i].total;
-    }
-
-    printf("\nApós %d ticks:\n", ticks);
-    printf("  pacotes gerados:            %d\n",
-           cenario->total_pacotes - gerador_pacotes_restantes(&gerador));
-    printf("  inseridos na esteira:       %d\n", inseridos);
-    printf("  atualmente na esteira:      %d\n", esteira_total(&esteira));
-    printf("  aguardando nas estações:    %d\n", aguardando);
-    printf("  em transporte (coletores):  %d\n", carregando);
-
-    if (esteira_total(&esteira) > 0 || carregando > 0) {
-        printf("\nfluxo estanca sem os entregadores drenando o out (Issue #8).\n");
+        coletar_estatisticas(&stats, estacoes, cenario->num_estacoes, &esteira,
+                             entregues, agora_seg() - t0);
+        imprimir_frame_texto(indice, cenario, mapa, robos, total_robos,
+                             &esteira, &stats);
     }
 
     mapa_destruir(mapa);
