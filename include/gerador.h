@@ -17,18 +17,28 @@ typedef struct {
     Pacote pacotes[MAX_PACOTES];
 } Gerador;
 
+/* Desfecho de uma tentativa de geração. Separa "acabou o cenário" (fim
+ * definitivo) de "não há espaço agora" (transitório: as filas de coleta
+ * estão cheias e vão drenar quando os coletores agirem — Issue #7). */
+typedef enum {
+    GERACAO_OK,         /* pacote gerado e enfileirado numa estação */
+    GERACAO_CONCLUIDA,  /* o total de pacotes do cenário já foi gerado */
+    GERACAO_SEM_ESPACO  /* todas as estações estão com a fila cheia */
+} ResultadoGeracao;
+
 /* Espalha as estações P do cenário na área de coleta (coluna x=1,
  * espaçadas na vertical), marca as células como CELULA_ESTACAO_P e zera
- * o estado do gerador. Retorna false se o cenário estoura MAX_ESTACOES,
- * MAX_PACOTES ou os limites do mapa. */
+ * o estado do gerador. Retorna false se mapa/cenário forem nulos, se o
+ * cenário estoura MAX_ESTACOES, MAX_PACOTES ou os limites do mapa. */
 bool gerador_inicializar(Gerador *gerador, const Cenario *cenario,
                          Mapa *mapa, Estacao *estacoes);
 
-/* Gera o próximo pacote na estação da vez (round-robin) e o deixa na
- * fila de coleta dela. Retorna NULL se o total do cenário já foi gerado
- * ou se a fila da estação está cheia. O ritmo de geração (intervalos)
- * fica pra Issue #9. */
-Pacote *gerador_gerar(Gerador *gerador);
+/* Gera o próximo pacote seguindo round-robin entre as estações: começa na
+ * estação da vez e, se a fila dela estiver cheia, tenta as seguintes até
+ * dar uma volta completa. Em GERACAO_OK, *out (quando não-NULL) recebe o
+ * pacote gerado; nos demais desfechos *out vira NULL. O ritmo de geração
+ * (intervalos) fica pra Issue #9. */
+ResultadoGeracao gerador_gerar(Gerador *gerador, Pacote **out);
 
 /* Quantos pacotes do cenário ainda faltam gerar. */
 int gerador_pacotes_restantes(const Gerador *gerador);

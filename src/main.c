@@ -57,8 +57,11 @@ int main(int argc, char **argv)
            cenario->num_estacoes, cenario->total_pacotes);
 
     /* geração sequencial: um pacote por vez, round-robin entre as
-     * estações, até esgotar o total do cenário */
-    while (gerador_gerar(&gerador) != NULL) {
+     * estações, até esgotar o total do cenário. Sem coletores drenando as
+     * filas nesta etapa, SEM_ESPACO é possível se o total superar a
+     * capacidade somada das filas — reportado abaixo, distinto de "fim". */
+    ResultadoGeracao resultado;
+    while ((resultado = gerador_gerar(&gerador, NULL)) == GERACAO_OK) {
     }
 
     imprimir_mapa(mapa);
@@ -70,6 +73,10 @@ int main(int argc, char **argv)
                estacoes[i].total);
     }
     printf("faltando gerar: %d\n", gerador_pacotes_restantes(&gerador));
+    if (resultado == GERACAO_SEM_ESPACO) {
+        printf("geração interrompida: filas de coleta cheias "
+               "(coletores drenam as filas na Issue #7)\n");
+    }
 
     mapa_destruir(mapa);
     return 0;
