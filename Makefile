@@ -1,6 +1,6 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -g
-SRC = src/main.c src/mapa.c src/robo.c
+SRC = src/main.c src/mapa.c src/robo.c src/cenario.c
 TARGET = idp
 
 .PHONY: all run clean
