@@ -1,10 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "idp.h"
 #include "cenario.h"
 #include "mapa.h"
 #include "gerador.h"
+#include "esteira.h"
+#include "coletor.h"
 
 /* Render textual provisório (a interface real é a Issue #10). */
 static char celula_char(TipoCelula tipo)
@@ -52,30 +55,92 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("Cenário %d: mapa %dx%d, %d estações P, %d pacotes\n\n",
-           indice, cenario->largura_mapa, cenario->altura_mapa,
-           cenario->num_estacoes, cenario->total_pacotes);
+    Esteira esteira;
+    if (!esteira_inicializar(&esteira, cenario->tamanho_esteira)) {
+        fprintf(stderr, "falha ao inicializar a esteira\n");
+        mapa_destruir(mapa);
+        return 1;
+    }
 
-    /* geração sequencial: um pacote por vez, round-robin entre as
-     * estações, até esgotar o total do cenário. Sem coletores drenando as
-     * filas nesta etapa, SEM_ESPACO é possível se o total superar a
-     * capacidade somada das filas — reportado abaixo, distinto de "fim". */
-    ResultadoGeracao resultado;
-    while ((resultado = gerador_gerar(&gerador, NULL)) == GERACAO_OK) {
+    /* entrada (in) da esteira no centro do mapa; os coletores partem da borda
+     * direita, coletam nas estações P (coluna x=1) e levam o pacote até aqui. */
+    Posicao entrada = { cenario->largura_mapa / 2, cenario->altura_mapa / 2 };
+
+    Robo robos[MAX_ROBOS];
+    Coletor coletores[MAX_ROBOS];
+    int num_coletores = cenario->num_robos_coletores;
+    for (int i = 0; i < num_coletores; i++) {
+        Posicao inicial = { cenario->largura_mapa - 2, 1 + i };
+        if (!robo_inicializar(&robos[i], i, ROBO_COLETOR, inicial, mapa)) {
+            fprintf(stderr, "falha ao posicionar o coletor %d\n", i);
+            mapa_destruir(mapa);
+            return 1;
+        }
+        coletor_inicializar(&coletores[i], &robos[i], entrada);
+    }
+
+    printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, "
+           "esteira %d, %d pacotes\n\n",
+           indice, cenario->largura_mapa, cenario->altura_mapa,
+           cenario->num_estacoes, num_coletores, cenario->tamanho_esteira,
+           cenario->total_pacotes);
+
+    /* laço sequencial: a cada tick gera um pacote, cada coletor dá um passo do
+     * seu ciclo e a esteira avança. Sem entregadores drenando o out (Issue #8),
+     * o fluxo estanca quando a esteira enche — o laço encerra ao não haver mais
+     * progresso (nada gerado e nenhum coletor andando/coletando/inserindo). */
+    int inseridos = 0;
+    int ticks = 0;
+    const int ticks_max = 20000;
+    while (ticks < ticks_max) {
+        bool progresso = false;
+
+        if (gerador_gerar(&gerador, NULL) == GERACAO_OK) {
+            progresso = true;
+        }
+
+        for (int i = 0; i < num_coletores; i++) {
+            ResultadoColeta r = coletor_passo(&coletores[i], mapa, estacoes,
+                                              cenario->num_estacoes, &esteira);
+            if (r == COLETA_INSERIU) {
+                inseridos++;
+                progresso = true;
+            } else if (r == COLETA_ANDANDO || r == COLETA_COLETOU) {
+                progresso = true;
+            }
+        }
+
+        esteira_avancar(&esteira);
+        ticks++;
+
+        if (!progresso) {
+            break;
+        }
     }
 
     imprimir_mapa(mapa);
 
-    printf("\nPacotes aguardando coleta por estação:\n");
-    for (int i = 0; i < cenario->num_estacoes; i++) {
-        printf("  estação %d em (%d, %d): %d pacotes\n",
-               i, estacoes[i].posicao.x, estacoes[i].posicao.y,
-               estacoes[i].total);
+    int carregando = 0;
+    for (int i = 0; i < num_coletores; i++) {
+        if (robos[i].pacote_atual != NULL) {
+            carregando++;
+        }
     }
-    printf("faltando gerar: %d\n", gerador_pacotes_restantes(&gerador));
-    if (resultado == GERACAO_SEM_ESPACO) {
-        printf("geração interrompida: filas de coleta cheias "
-               "(coletores drenam as filas na Issue #7)\n");
+    int aguardando = 0;
+    for (int i = 0; i < cenario->num_estacoes; i++) {
+        aguardando += estacoes[i].total;
+    }
+
+    printf("\nApós %d ticks:\n", ticks);
+    printf("  pacotes gerados:            %d\n",
+           cenario->total_pacotes - gerador_pacotes_restantes(&gerador));
+    printf("  inseridos na esteira:       %d\n", inseridos);
+    printf("  atualmente na esteira:      %d\n", esteira_total(&esteira));
+    printf("  aguardando nas estações:    %d\n", aguardando);
+    printf("  em transporte (coletores):  %d\n", carregando);
+
+    if (esteira_total(&esteira) > 0 || carregando > 0) {
+        printf("\nfluxo estanca sem os entregadores drenando o out (Issue #8).\n");
     }
 
     mapa_destruir(mapa);
