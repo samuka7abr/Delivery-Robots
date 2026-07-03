@@ -15,6 +15,7 @@
 #define MAX_ESTACOES 8
 #define MAX_PONTOS_D 8
 #define MAX_ESTEIRA  32
+#define MAX_PACOTES  128
 
 typedef struct {
     int x;
