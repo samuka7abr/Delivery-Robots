@@ -93,10 +93,36 @@ static void teste_gerador(void)
     mapa_destruir(mapa);
 }
 
+static void teste_gerador_rejeita_mapa_pequeno_demais(void)
+{
+    printf("gerador com mapa pequeno demais:\n");
+    /* altura 2 pra 3 estações: a divisão inteira da fórmula de
+     * posicionamento faz duas estações caírem na mesma célula */
+    Cenario cenario = {
+        .largura_mapa           = 5,
+        .altura_mapa            = 2,
+        .num_robos_coletores    = 1,
+        .num_robos_entregadores = 1,
+        .num_estacoes           = 3,
+        .num_pontos_despacho    = 1,
+        .tamanho_esteira        = 4,
+        .total_pacotes          = 10,
+    };
+    Mapa *mapa = mapa_criar(cenario.largura_mapa, cenario.altura_mapa);
+    Estacao estacoes[MAX_ESTACOES];
+    Gerador gerador;
+
+    verificar(!gerador_inicializar(&gerador, &cenario, mapa, estacoes),
+              "recusa cenário onde duas estações colidiriam na mesma célula");
+
+    mapa_destruir(mapa);
+}
+
 int main(void)
 {
     teste_fila_fifo();
     teste_gerador();
+    teste_gerador_rejeita_mapa_pequeno_demais();
 
     if (falhas > 0) {
         printf("\n%d teste(s) falharam\n", falhas);
