@@ -145,6 +145,16 @@ static void teste_fluxo_completo(void)
     verificar(esteira_total(&e) == 0, "esteira termina vazia");
 }
 
+static void teste_null_safety(void)
+{
+    printf("robustez com esteira nula:\n");
+    Pacote p = { 0, PACOTE_AGUARDANDO, 0 };
+    verificar(!esteira_inserir(NULL, &p), "inserir em esteira nula retorna false");
+    verificar(!esteira_avancar(NULL), "avançar esteira nula retorna false");
+    verificar(esteira_retirar(NULL) == NULL, "retirar de esteira nula retorna NULL");
+    verificar(esteira_total(NULL) == 0, "total de esteira nula é 0");
+}
+
 int main(void)
 {
     teste_inicializacao();
@@ -153,6 +163,7 @@ int main(void)
     teste_capacidade_por_posicao();
     teste_retirada();
     teste_fluxo_completo();
+    teste_null_safety();
 
     if (falhas > 0) {
         printf("\n%d teste(s) falharam\n", falhas);
