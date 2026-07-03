@@ -1,11 +1,12 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "idp.h"
+#include "cenario.h"
 #include "mapa.h"
-#include "robo.h"
+#include "gerador.h"
 
-/* Render textual do mapa (a interface real é a Issue #10). Os robôs são
- * desenhados por cima das células do mapa a partir das suas posições atuais. */
+/* Render textual provisório (a interface real é a Issue #10). */
 static char celula_char(TipoCelula tipo)
 {
     switch (tipo) {
@@ -17,77 +18,65 @@ static char celula_char(TipoCelula tipo)
     }
 }
 
-static void imprimir_mapa(const Mapa *mapa, Robo *robos, int num_robos)
+static void imprimir_mapa(const Mapa *mapa)
 {
     for (int y = 0; y < mapa->altura; y++) {
         for (int x = 0; x < mapa->largura; x++) {
-            char c = celula_char(mapa->celulas[y][x]);
-            for (int r = 0; r < num_robos; r++) {
-                if (robos[r].posicao.x == x && robos[r].posicao.y == y) {
-                    c = (robos[r].tipo == ROBO_COLETOR) ? 'C' : 'E';
-                    break;
-                }
-            }
-            putchar(c);
+            putchar(celula_char(mapa->celulas[y][x]));
         }
         putchar('\n');
     }
 }
 
-/* Tenta mover o robô e relata o resultado, deixando visível quando o
- * movimento é recusado por limite do mapa ou por overlap com outra entidade. */
-static void passo(Robo *robo, Mapa *mapa, int dx, int dy, const char *descricao)
+int main(int argc, char **argv)
 {
-    bool moveu = robo_mover(robo, mapa, dx, dy);
-    printf("robô %d: %-28s -> %s (%d, %d)\n",
-           robo->id, descricao, moveu ? "moveu" : "RECUSADO",
-           robo->posicao.x, robo->posicao.y);
-}
+    int indice = (argc > 1) ? atoi(argv[1]) : 0;
+    const Cenario *cenario = cenario_obter(indice);
+    if (cenario == NULL) {
+        fprintf(stderr, "cenário inválido: use um índice entre 0 e %d\n",
+                CENARIO_TOTAL - 1);
+        return 1;
+    }
 
-int main(void)
-{
-    const int largura = 10;
-    const int altura = 6;
-
-    Mapa *mapa = mapa_criar(largura, altura);
+    Mapa *mapa = mapa_criar(cenario->largura_mapa, cenario->altura_mapa);
     if (mapa == NULL) {
         fprintf(stderr, "falha ao criar o mapa\n");
         return 1;
     }
 
-    /* paredes nas bordas */
-    for (int x = 0; x < largura; x++) {
-        mapa_definir_tipo(mapa, (Posicao){ x, 0 }, CELULA_PAREDE);
-        mapa_definir_tipo(mapa, (Posicao){ x, altura - 1 }, CELULA_PAREDE);
+    Estacao estacoes[MAX_ESTACOES];
+    Gerador gerador;
+    if (!gerador_inicializar(&gerador, cenario, mapa, estacoes)) {
+        fprintf(stderr, "falha ao inicializar o gerador\n");
+        mapa_destruir(mapa);
+        return 1;
     }
-    for (int y = 0; y < altura; y++) {
-        mapa_definir_tipo(mapa, (Posicao){ 0, y }, CELULA_PAREDE);
-        mapa_definir_tipo(mapa, (Posicao){ largura - 1, y }, CELULA_PAREDE);
+
+    printf("Cenário %d: mapa %dx%d, %d estações P, %d pacotes\n\n",
+           indice, cenario->largura_mapa, cenario->altura_mapa,
+           cenario->num_estacoes, cenario->total_pacotes);
+
+    /* geração sequencial: um pacote por vez, round-robin entre as
+     * estações, até esgotar o total do cenário. Sem coletores drenando as
+     * filas nesta etapa, SEM_ESPACO é possível se o total superar a
+     * capacidade somada das filas — reportado abaixo, distinto de "fim". */
+    ResultadoGeracao resultado;
+    while ((resultado = gerador_gerar(&gerador, NULL)) == GERACAO_OK) {
     }
-    /* uma parede interna, uma estação P e um ponto D */
-    mapa_definir_tipo(mapa, (Posicao){ 4, 2 }, CELULA_PAREDE);
-    mapa_definir_tipo(mapa, (Posicao){ 4, 3 }, CELULA_PAREDE);
-    mapa_definir_tipo(mapa, (Posicao){ 1, 1 }, CELULA_ESTACAO_P);
-    mapa_definir_tipo(mapa, (Posicao){ largura - 2, altura - 2 }, CELULA_PONTO_D);
 
-    Robo robos[2];
-    robo_inicializar(&robos[0], 0, ROBO_COLETOR,   (Posicao){ 2, 2 }, mapa);
-    robo_inicializar(&robos[1], 1, ROBO_ENTREGADOR, (Posicao){ 3, 2 }, mapa);
+    imprimir_mapa(mapa);
 
-    printf("Estado inicial:\n");
-    imprimir_mapa(mapa, robos, 2);
-
-    printf("\nMovimentando o robô coletor (0):\n");
-    passo(&robos[0], mapa,  0, -1, "sobe (célula livre)");
-    passo(&robos[0], mapa,  0, -1, "sobe (parede da borda)");
-    passo(&robos[0], mapa, -1,  0, "esquerda (estação P livre)");
-    passo(&robos[0], mapa, -1,  0, "esquerda (parede da borda)");
-    passo(&robos[0], mapa,  0,  1, "desce (célula livre)");
-    passo(&robos[0], mapa,  1,  0, "direita rumo ao entregador");
-    passo(&robos[0], mapa,  1,  0, "direita (overlap com robô 1)");
-
-    printf("\nEstado final:\n");
-    imprimir_mapa(mapa, robos, 2);
+    printf("\nPacotes aguardando coleta por estação:\n");
+    for (int i = 0; i < cenario->num_estacoes; i++) {
+        printf("  estação %d em (%d, %d): %d pacotes\n",
+               i, estacoes[i].posicao.x, estacoes[i].posicao.y,
+               estacoes[i].total);
+    }
+    printf("faltando gerar: %d\n", gerador_pacotes_restantes(&gerador));
+    if (resultado == GERACAO_SEM_ESPACO) {
+        printf("geração interrompida: filas de coleta cheias "
+               "(coletores drenam as filas na Issue #7)\n");
+    }
 
     mapa_destruir(mapa);
     return 0;
