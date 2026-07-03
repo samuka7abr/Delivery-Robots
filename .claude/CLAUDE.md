@@ -72,6 +72,66 @@ Antes de começar a resolver qualquer issue:
   que já está claro pelo nome da função/variável.
 - Nomes de domínio (structs, campos, funções da simulação) em português,
   consistente com o enunciado e o restante do código já escrito.
+- **Guardas `NULL` consistentes.** Toda função pública de módulo que
+  desreferencia um ponteiro valida `ptr == NULL` no topo e retorna o
+  resultado "vazio" correspondente (`false` / `NULL` / `0`), como
+  `esteira_inicializar` e `gerador_inicializar`. Não guardar um argumento e
+  deixar outro solto na mesma função.
+- **Nunca sobrecarregar um sentinela.** Um único `NULL`/`-1` não pode
+  significar duas coisas diferentes (ex.: "acabou" e "sem espaço"). Quando há
+  mais de um motivo de parada/falha, usar `enum` de resultado + out-param
+  (padrão adotado em `ResultadoGeracao`). Esse bug já apareceu 2x no repo
+  (diagonal do robô na #3, `NULL` do gerador na #5) — vigiar em cada módulo.
+- **Comentário/doc não pode contradizer o código.** Header que descreve
+  comportamento diferido pra outra issue deve deixar claro que é diferido —
+  não afirmar que já faz (ex.: mutex do `mapa`/`esteira` fica pra #9; o
+  doc-comment não deve dizer que a init já cuida disso).
+- **Cortes de escopo diferidos são intencionais.** Não implementar por
+  antecipação o que pertence a issue futura (ex.: sync mutex/cond da esteira
+  só entra na #9; `esteira_inicializar` não inicializa o mutex de propósito).
+
+## Testes e verificação
+
+Antes de considerar qualquer código pronto, rodar (nesta ordem):
+
+1. **Build sem warnings:** `make` com `-Wall -Wextra` (já no Makefile). O
+   Makefile usa wildcard em `src/` e `tests/`; `make test` compila e roda
+   todos os `tests/*.c` (cada binário retorna != 0 se algum check falhar).
+2. **Header isolado:** `gcc -Wall -Wextra -fsyntax-only -x c include/foo.h -Iinclude`
+   — garante que o header compila sozinho (includes próprios corretos).
+3. **Análise estática (`-fanalyzer`, GCC):** pega leak, double-free,
+   use-after-free, null-deref e uso de não-inicializado.
+   `for f in src/*.c; do gcc -fanalyzer -Wall -Wextra -Iinclude -c "$f" -o /dev/null; done`
+4. **UBSan trap-mode (runtime, dispensa a runtime lib):** pega OOB de array,
+   overflow de inteiro e null-deref; aborta via SIGILL (exit 132).
+   `gcc -Wall -Wextra -Iinclude -fsanitize=undefined -fsanitize-undefined-trap-on-error -g -o bin <srcs>`
+   e rodar o binário (exit 0 = sem UB).
+
+`valgrind` e as runtime libs de ASan/UBSan (`libasan`/`libubsan`) **não estão
+disponíveis** neste ambiente. Corretude de memória se verifica por
+pareamento manual `malloc`/`free` + `-fanalyzer`. Prefira pools fixos em
+stack (`MAX_*`) a `malloc` — o gerador/esteira não têm nenhum `malloc`.
+
+Regras que vêm junto:
+
+- **Bug encontrado → teste de regressão junto da correção**, no mesmo PR
+  (ex.: colisão de estações na #5, NULL-safety da esteira na #6).
+- **Repro pra qualquer coisa suspeita.** Escrever um programinha descartável
+  que exercite o caso de borda e observar o comportamento — não confiar só
+  na leitura do diff nem só no "compila".
+
+## Revisão de PR
+
+Ao revisar PR de outra pessoa, **não revisar só lendo o diff**:
+
+1. `git worktree add <dir> origin/<branch>` — trabalhar numa cópia isolada,
+   nunca na cópia principal.
+2. `make` + `make test` + os analisadores acima + repro pros casos suspeitos.
+3. Se achar bug na branch de outro contribuidor: aplicar a correção no
+   worktree, gerar o `.patch` (`git diff > fix.patch`) e **perguntar** antes
+   de pushar — o classificador de permissão bloqueia push em branch alheia
+   sem confirmação nomeando a ação (push direto / só comentar / entregar o
+   diff).
 
 ## Commits
 
