@@ -16,7 +16,7 @@ bool esteira_inicializar(Esteira *esteira, int tamanho)
 
 bool esteira_inserir(Esteira *esteira, Pacote *pacote)
 {
-    if (pacote == NULL || esteira->posicoes[0] != NULL) {
+    if (esteira == NULL || pacote == NULL || esteira->posicoes[0] != NULL) {
         return false;
     }
     pacote->estado = PACOTE_NA_ESTEIRA;
@@ -26,6 +26,9 @@ bool esteira_inserir(Esteira *esteira, Pacote *pacote)
 
 bool esteira_avancar(Esteira *esteira)
 {
+    if (esteira == NULL) {
+        return false;
+    }
     bool moveu = false;
     /* varre de out pra in: a célula liberada por um pacote no tick
      * ja pode ser ocupada pelo de tras, mas ngm anda 2 posições */
@@ -41,6 +44,9 @@ bool esteira_avancar(Esteira *esteira)
 
 Pacote *esteira_retirar(Esteira *esteira)
 {
+    if (esteira == NULL) {
+        return NULL;
+    }
     int out = esteira->tamanho - 1;
     Pacote *pacote = esteira->posicoes[out];
     esteira->posicoes[out] = NULL;
@@ -49,6 +55,9 @@ Pacote *esteira_retirar(Esteira *esteira)
 
 int esteira_total(const Esteira *esteira)
 {
+    if (esteira == NULL) {
+        return 0;
+    }
     int total = 0;
     for (int i = 0; i < esteira->tamanho; i++) {
         if (esteira->posicoes[i] != NULL) {
