@@ -16,24 +16,24 @@ TEST_BIN = $(patsubst tests/%.c,build/%,$(TEST_SRC))
 all: $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDLIBS)
+	@$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
 build/%.o: src/%.c | build
-	$(CC) $(CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) -c $< -o $@
 
 build/%: tests/%.c $(MODULOS) | build
-	$(CC) $(CFLAGS) -o $@ $< $(MODULOS) $(LDLIBS)
+	@$(CC) $(CFLAGS) -o $@ $< $(MODULOS) $(LDLIBS)
 
 build:
-	mkdir -p build
+	@mkdir -p build
 
 run: all
-	./$(TARGET)
+	@./$(TARGET)
 
 test: $(TEST_BIN)
 	@for t in $(TEST_BIN); do echo "== $$t"; ./$$t || exit 1; done
 
 clean:
-	rm -rf build
+	@rm -rf build
 
 -include $(DEP)

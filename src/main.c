@@ -18,6 +18,13 @@
 #define TICK_US 100000 /* 100 ms por unidade de tempo; -DTICK_US acelera em testes */
 #endif
 
+#define COR_RESET    "\033[0m"
+#define COR_NEGRITO  "\033[1m"
+#define COR_CIANO    "\033[1;36m"
+#define COR_VERDE    "\033[1;32m"
+#define COR_AMARELO  "\033[1;33m"
+#define COR_VERMELHO "\033[1;31m"
+
 static bool ler_indice_cenario(const char *texto, int *indice)
 {
     if (texto == NULL || indice == NULL) {
@@ -38,21 +45,28 @@ static bool ler_indice_cenario(const char *texto, int *indice)
 
 static int escolher_cenario(void)
 {
-    printf("Escolha o cenário:\n\n");
+    static const char *cores[CENARIO_TOTAL] = {
+        COR_VERDE,
+        COR_AMARELO,
+        COR_VERMELHO,
+    };
+    printf(COR_CIANO "IDP - Centro de Distribuição\n" COR_RESET);
+    printf(COR_NEGRITO "Escolha o cenário:\n\n" COR_RESET);
     for (int i = 0; i < CENARIO_TOTAL; i++) {
         const Cenario *c = cenario_obter(i);
-        printf("%d — %dx%d | %d coletores | %d entregadores | "
-               "%d P | %d D | esteira %d | %d pacotes\n",
-               i, c->largura_mapa, c->altura_mapa,
+        printf("%s%d - %dx%d | %d coletores | %d entregadores | "
+               "%d P | %d D | esteira %d | %d pacotes%s\n",
+               cores[i], i,
+               c->largura_mapa, c->altura_mapa,
                c->num_robos_coletores, c->num_robos_entregadores,
                c->num_estacoes, c->num_pontos_despacho,
-               c->tamanho_esteira, c->total_pacotes);
+               c->tamanho_esteira, c->total_pacotes, COR_RESET);
     }
 
     char entrada[32];
     int indice;
     while (true) {
-        printf("\nCenário: ");
+        printf(COR_CIANO "\nCenário: " COR_RESET);
         fflush(stdout);
         if (fgets(entrada, sizeof entrada, stdin) == NULL) {
             return -1;
@@ -60,7 +74,7 @@ static int escolher_cenario(void)
         if (ler_indice_cenario(entrada, &indice)) {
             return indice;
         }
-        printf("Opção inválida. Digite 0, 1 ou 2.\n");
+        printf(COR_VERMELHO "Opção inválida. Digite 0, 1 ou 2.\n" COR_RESET);
     }
 }
 
@@ -221,7 +235,7 @@ static void imprimir_frame_texto(int indice, const Cenario *cenario, Mapa *mapa,
     tempo = estatisticas->tempo_execucao_seg;
     pthread_mutex_unlock(&estatisticas->mutex);
 
-    printf("Cenário %d — mapa %dx%d\n\n", indice,
+    printf("Cenário %d - mapa %dx%d\n\n", indice,
            cenario->largura_mapa, cenario->altura_mapa);
     if (interface_compor_mapa(mapa, robos, num_robos,
                               mapa_txt, sizeof mapa_txt) > 0) {
