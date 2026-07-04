@@ -17,7 +17,7 @@ bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy);
 
 /* Dá um passo (uma célula, um eixo) em direção ao alvo: prioriza o eixo mais
  * distante e, se os passos que aproximam estiverem bloqueados, tenta contornar
- * de lado no eixo já alinhado — o que evita o deadlock de corredor entre dois
+ * de lado no eixo já alinhado - o que evita o deadlock de corredor entre dois
  * robôs que se cruzam em sentidos opostos. Sem desvio de obstáculos fixos (os
  * cenários atuais não têm paredes internas). Retorna true se o robô se moveu. */
 bool robo_passo_em_direcao(Robo *robo, Mapa *mapa, Posicao alvo);

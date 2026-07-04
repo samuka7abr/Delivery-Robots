@@ -122,7 +122,7 @@ static void teste_um_pacote_por_vez(void)
     verificar(robo.pacote_atual == &a, "retira o pacote que estava no out");
 
     /* enquanto carrega o primeiro, um novo pacote surge no out; o entregador não
-     * pode retirá-lo antes de entregar o que carrega — invariante checado a cada
+     * pode retirá-lo antes de entregar o que carrega - invariante checado a cada
      * passo, sem depender de contagem fixa */
     colocar_no_out(&es, &b);
     bool violou = false;

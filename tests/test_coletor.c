@@ -128,7 +128,7 @@ static void teste_um_pacote_por_vez(void)
     verificar(estacao.total == 1, "só um pacote sai da fila por coleta");
 
     /* até entregar o primeiro, o robô nunca carrega o segundo nem o retira da
-     * fila — invariante checado a cada passo, sem depender de contagem fixa */
+     * fila - invariante checado a cada passo, sem depender de contagem fixa */
     bool violou = false;
     ResultadoColeta r = COLETA_OCIOSO;
     for (int i = 0; i < 100 && r != COLETA_INSERIU; i++) {

@@ -20,7 +20,7 @@ typedef struct {
 
 /* Desfecho de uma tentativa de geração. Separa "acabou o cenário" (fim
  * definitivo) de "não há espaço agora" (transitório: as filas de coleta
- * estão cheias e vão drenar quando os coletores agirem — Issue #7). */
+ * estão cheias e vão drenar quando os coletores agirem - Issue #7). */
 typedef enum {
     GERACAO_OK,         /* pacote gerado e enfileirado numa estação */
     GERACAO_CONCLUIDA,  /* o total de pacotes do cenário já foi gerado */
