@@ -198,7 +198,7 @@ static void teste_gerador_pula_estacao_cheia(void)
               "gera mesmo com a estação da vez cheia");
     verificar(p != NULL && p->estacao_origem == 1,
               "coloca o pacote na estação 1 (a que tem espaço)");
-   
+
     for (int i = 0; i < cenario.num_estacoes; i++) {
         estacao_destruir(&estacoes[i]);
     }

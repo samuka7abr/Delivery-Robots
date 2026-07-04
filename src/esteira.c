@@ -110,4 +110,3 @@ int esteira_total(Esteira *esteira)
     pthread_mutex_unlock(&esteira->mutex);
     return total;
 }
-

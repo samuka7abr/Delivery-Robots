@@ -9,7 +9,7 @@
  * esteira usa mutex + cond var, cobre avanco e as posicoes in/out.
  * ponto de despacho eh so uma celula do mapa, sem trava propria.
  * contadores (aguardando, na esteira, entregues, tempo) ficam num mutex so.
- * interface le tudo isso direto, sem trava nova. */
+ * interface cria snapshots usando os mutexes desses recursos, sem trava nova. */
 
 #define MAX_ROBOS        16
 #define MAX_ESTACOES     8

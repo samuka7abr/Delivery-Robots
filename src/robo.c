@@ -17,6 +17,9 @@ bool robo_inicializar(Robo *robo, int id, TipoRobo tipo, Posicao inicial, Mapa *
 
 bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy)
 {
+    if (robo == NULL || mapa == NULL) {
+        return false;
+    }
     /* movimento é célula a célula, um eixo por vez: sem diagonal */
     bool passo_valido = (dx == 0 && (dy == 1 || dy == -1)) ||
                          (dy == 0 && (dx == 1 || dx == -1));
@@ -24,14 +27,16 @@ bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy)
         return false;
     }
 
+    pthread_mutex_lock(&mapa->mutex);
     Posicao destino = { robo->posicao.x + dx, robo->posicao.y + dy };
-    if (!mapa_tentar_ocupar(mapa, destino)) {
+    if (!mapa_celula_livre(mapa, destino)) {
+        pthread_mutex_unlock(&mapa->mutex);
         return false;
     }
-    /* ocupa o destino antes de liberar a origem: o robô nunca fica sem
-     * célula, então outra thread não toma seu lugar no meio do passo */
-    mapa_liberar(mapa, robo->posicao);
+    mapa->ocupada[destino.y][destino.x] = true;
+    mapa->ocupada[robo->posicao.y][robo->posicao.x] = false;
     robo->posicao = destino;
+    pthread_mutex_unlock(&mapa->mutex);
     return true;
 }
 

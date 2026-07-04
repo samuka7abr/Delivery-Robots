@@ -23,7 +23,7 @@ void estacao_destruir(Estacao *estacao)
 }
 
 /* leitura instantânea, sem lock: com threads o valor pode mudar logo em
- * seguida — quem garante a decisão é o retorno de enfileirar/desenfileirar */
+ * seguida - quem garante a decisão é o retorno de enfileirar/desenfileirar */
 bool estacao_fila_vazia(const Estacao *estacao)
 {
     return estacao->total == 0;

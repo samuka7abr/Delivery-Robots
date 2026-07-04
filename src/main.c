@@ -1,41 +1,88 @@
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
+#include <time.h>
 #include <unistd.h>
-#include <pthread.h>
 
-#include "idp.h"
 #include "cenario.h"
-#include "mapa.h"
-#include "gerador.h"
-#include "esteira.h"
 #include "coletor.h"
 #include "entregador.h"
+#include "esteira.h"
+#include "gerador.h"
+#include "idp.h"
+#include "interface.h"
+#include "mapa.h"
 
 #ifndef TICK_US
 #define TICK_US 100000 /* 100 ms por unidade de tempo; -DTICK_US acelera em testes */
 #endif
 
-/* Render textual provisório (a interface real é a Issue #10). */
-static char celula_char(TipoCelula tipo)
+#define COR_RESET    "\033[0m"
+#define COR_NEGRITO  "\033[1m"
+#define COR_CIANO    "\033[1;36m"
+#define COR_VERDE    "\033[1;32m"
+#define COR_AMARELO  "\033[1;33m"
+#define COR_VERMELHO "\033[1;31m"
+
+static bool ler_indice_cenario(const char *texto, int *indice)
 {
-    switch (tipo) {
-        case CELULA_PAREDE:    return '#';
-        case CELULA_ESTACAO_P: return 'P';
-        case CELULA_PONTO_D:   return 'D';
-        case CELULA_LIVRE:
-        default:               return '.';
+    if (texto == NULL || indice == NULL) {
+        return false;
+    }
+
+    char *fim;
+    long valor = strtol(texto, &fim, 10);
+    while (*fim == ' ' || *fim == '\t' || *fim == '\n') {
+        fim++;
+    }
+    if (fim == texto || *fim != '\0' || valor < 0 || valor >= CENARIO_TOTAL) {
+        return false;
+    }
+    *indice = (int)valor;
+    return true;
+}
+
+static int escolher_cenario(void)
+{
+    static const char *cores[CENARIO_TOTAL] = {
+        COR_VERDE,
+        COR_AMARELO,
+        COR_VERMELHO,
+    };
+    printf(COR_CIANO "IDP - Centro de Distribuição\n" COR_RESET);
+    printf(COR_NEGRITO "Escolha o cenário:\n\n" COR_RESET);
+    for (int i = 0; i < CENARIO_TOTAL; i++) {
+        const Cenario *c = cenario_obter(i);
+        printf("%s%d - %dx%d | %d coletores | %d entregadores | "
+               "%d P | %d D | esteira %d | %d pacotes%s\n",
+               cores[i], i,
+               c->largura_mapa, c->altura_mapa,
+               c->num_robos_coletores, c->num_robos_entregadores,
+               c->num_estacoes, c->num_pontos_despacho,
+               c->tamanho_esteira, c->total_pacotes, COR_RESET);
+    }
+
+    char entrada[32];
+    int indice;
+    while (true) {
+        printf(COR_CIANO "\nCenário: " COR_RESET);
+        fflush(stdout);
+        if (fgets(entrada, sizeof entrada, stdin) == NULL) {
+            return -1;
+        }
+        if (ler_indice_cenario(entrada, &indice)) {
+            return indice;
+        }
+        printf(COR_VERMELHO "Opção inválida. Digite 0, 1 ou 2.\n" COR_RESET);
     }
 }
 
-static void imprimir_mapa(const Mapa *mapa)
+static double agora_seg(void)
 {
-    for (int y = 0; y < mapa->altura; y++) {
-        for (int x = 0; x < mapa->largura; x++) {
-            putchar(celula_char(mapa->celulas[y][x]));
-        }
-        putchar('\n');
-    }
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
 /* --- encerramento coordenado ------------------------------------------- */
@@ -83,6 +130,15 @@ static void stats_somar_entregue(void)
     pthread_mutex_unlock(&stats.mutex);
 }
 
+static int stats_atualizar_e_obter_entregues(double tempo)
+{
+    pthread_mutex_lock(&stats.mutex);
+    stats.tempo_execucao_seg = tempo;
+    int entregues = stats.pacotes_entregues;
+    pthread_mutex_unlock(&stats.mutex);
+    return entregues;
+}
+
 /* --- threads das entidades --------------------------------------------- */
 
 typedef struct {
@@ -99,7 +155,6 @@ static void *thread_gerador(void *arg)
         } else if (r == GERACAO_CONCLUIDA) {
             break;
         }
-        /* GERACAO_SEM_ESPACO: espera os coletores drenarem e tenta de novo */
         usleep(TICK_US);
     }
     return NULL;
@@ -160,17 +215,66 @@ static void *thread_entregador(void *arg)
     return NULL;
 }
 
-/* ------------------------------------------------------------------------ */
+/* --- saída headless ----------------------------------------------------- */
+
+static void imprimir_frame_texto(int indice, const Cenario *cenario, Mapa *mapa,
+                                 const Robo *robos, int num_robos,
+                                 Esteira *esteira, Estatisticas *estatisticas)
+{
+    char mapa_txt[4096];
+    char esteira_txt[3 + MAX_ESTEIRA + 4 + 1];
+    int aguardando;
+    int na_esteira;
+    int entregues;
+    double tempo;
+
+    pthread_mutex_lock(&estatisticas->mutex);
+    aguardando = estatisticas->pacotes_aguardando;
+    na_esteira = estatisticas->pacotes_na_esteira;
+    entregues = estatisticas->pacotes_entregues;
+    tempo = estatisticas->tempo_execucao_seg;
+    pthread_mutex_unlock(&estatisticas->mutex);
+
+    printf("Cenário %d - mapa %dx%d\n\n", indice,
+           cenario->largura_mapa, cenario->altura_mapa);
+    if (interface_compor_mapa(mapa, robos, num_robos,
+                              mapa_txt, sizeof mapa_txt) > 0) {
+        fputs(mapa_txt, stdout);
+    }
+    if (interface_compor_esteira(esteira, esteira_txt, sizeof esteira_txt) > 0) {
+        printf("\nEsteira: %s\n", esteira_txt);
+    }
+    printf("\nPacotes aguardando coleta : %d\n", aguardando);
+    printf("Pacotes na esteira        : %d\n", na_esteira);
+    printf("Pacotes entregues         : %d\n", entregues);
+    printf("Tempo de execucao (s)     : %.1f\n", tempo);
+}
 
 int main(int argc, char **argv)
 {
-    int indice = (argc > 1) ? atoi(argv[1]) : 0;
-    const Cenario *cenario = cenario_obter(indice);
-    if (cenario == NULL) {
-        fprintf(stderr, "cenário inválido: use um índice entre 0 e %d\n",
-                CENARIO_TOTAL - 1);
+    bool terminal_interativo = isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    int indice;
+    if (argc > 2) {
+        fprintf(stderr, "uso: %s [0|1|2]\n", argv[0]);
         return 1;
     }
+    if (argc == 2) {
+        if (!ler_indice_cenario(argv[1], &indice)) {
+            fprintf(stderr, "cenário inválido: use um índice entre 0 e %d\n",
+                    CENARIO_TOTAL - 1);
+            return 1;
+        }
+    } else if (terminal_interativo) {
+        indice = escolher_cenario();
+        if (indice < 0) {
+            fprintf(stderr, "\nseleção de cenário cancelada\n");
+            return 1;
+        }
+    } else {
+        indice = 0;
+    }
+
+    const Cenario *cenario = cenario_obter(indice);
 
     Mapa *mapa = mapa_criar(cenario->largura_mapa, cenario->altura_mapa);
     if (mapa == NULL) {
@@ -193,10 +297,6 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* fluxo espacial esquerda -> direita: coleta à esquerda (estações P em x=1),
-     * entrada (in) da esteira no primeiro quarto e saída (out) no terceiro
-     * quarto — bem separadas para coletores e entregadores não disputarem as
-     * mesmas células. Os coletores partem da borda esquerda. */
     Posicao entrada = { cenario->largura_mapa / 4, cenario->altura_mapa / 2 };
 
     Robo robos[MAX_ROBOS];
@@ -213,9 +313,6 @@ int main(int argc, char **argv)
         coletor_inicializar(&coletores[i], &robos[i], entrada);
     }
 
-    /* lado da expedição: a saída (out) da esteira e os pontos de despacho D na
-     * borda direita, espalhados na vertical. Cada entregador atende um ponto D
-     * fixo (distribuídos em rodízio), partindo logo à direita do out. */
     Posicao saida = { 3 * cenario->largura_mapa / 4, cenario->altura_mapa / 2 };
 
     PontoDespacho pontos[MAX_PONTOS_D];
@@ -243,6 +340,7 @@ int main(int argc, char **argv)
         entregador_inicializar(&entregadores[i], &robos[idx], saida,
                                pontos[i % num_pontos].posicao);
     }
+    int total_robos = num_coletores + num_entregadores;
 
     stats.pacotes_aguardando = 0;
     stats.pacotes_na_esteira = 0;
@@ -250,13 +348,8 @@ int main(int argc, char **argv)
     stats.tempo_execucao_seg = 0.0;
     pthread_mutex_init(&stats.mutex, NULL);
 
-    printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, %d entregadores, "
-           "%d pontos D, esteira %d, %d pacotes\n\n",
-           indice, cenario->largura_mapa, cenario->altura_mapa,
-           cenario->num_estacoes, num_coletores, num_entregadores, num_pontos,
-           cenario->tamanho_esteira, cenario->total_pacotes);
-
-    pthread_t th_gerador, th_esteira;
+    pthread_t th_gerador;
+    pthread_t th_esteira;
     ArgsGerador args_gerador = { &gerador };
     pthread_create(&th_gerador, NULL, thread_gerador, &args_gerador);
     pthread_create(&th_esteira, NULL, thread_esteira, &esteira);
@@ -277,14 +370,23 @@ int main(int argc, char **argv)
                        &args_entregadores[i]);
     }
 
-    /* supervisão: encerra quando todos os pacotes foram entregues. Como rede de
-     * segurança contra um eventual travamento, há também um teto de iterações. */
+    bool modo_interativo = terminal_interativo;
+    if (modo_interativo) {
+        interface_iniciar();
+    }
+
+    double inicio = agora_seg();
     const int max_iteracoes = 6000;
     for (int it = 0; it < max_iteracoes; it++) {
         usleep(TICK_US);
-        pthread_mutex_lock(&stats.mutex);
-        int entregues = stats.pacotes_entregues;
-        pthread_mutex_unlock(&stats.mutex);
+        int entregues = stats_atualizar_e_obter_entregues(agora_seg() - inicio);
+
+        if (modo_interativo) {
+            interface_desenhar(mapa, robos, total_robos, &esteira, &stats);
+            if (interface_tecla_sair()) {
+                break;
+            }
+        }
         if (entregues >= cenario->total_pacotes) {
             break;
         }
@@ -300,40 +402,21 @@ int main(int argc, char **argv)
         pthread_join(robos[num_coletores + i].thread, NULL);
     }
 
-    imprimir_mapa(mapa);
-
-    int carregando_col = 0;
-    for (int i = 0; i < num_coletores; i++) {
-        if (robos[i].pacote_atual != NULL) {
-            carregando_col++;
-        }
-    }
-    int carregando_ent = 0;
-    for (int i = 0; i < num_entregadores; i++) {
-        if (robos[num_coletores + i].pacote_atual != NULL) {
-            carregando_ent++;
-        }
-    }
-    int aguardando = 0;
-    for (int i = 0; i < cenario->num_estacoes; i++) {
-        aguardando += estacoes[i].total;
+    int entregues = stats_atualizar_e_obter_entregues(agora_seg() - inicio);
+    if (modo_interativo) {
+        interface_desenhar(mapa, robos, total_robos, &esteira, &stats);
+        interface_encerrar();
+    } else {
+        imprimir_frame_texto(indice, cenario, mapa, robos, total_robos,
+                             &esteira, &stats);
     }
 
-    printf("\nApós o encerramento:\n");
-    printf("  pacotes gerados:              %d\n",
-           cenario->total_pacotes - gerador_pacotes_restantes(&gerador));
-    printf("  entregues nos pontos D:       %d\n", stats.pacotes_entregues);
-    printf("  atualmente na esteira:        %d\n", esteira_total(&esteira));
-    printf("  aguardando nas estações:      %d\n", aguardando);
-    printf("  em transporte (coletores):    %d\n", carregando_col);
-    printf("  em transporte (entregadores): %d\n", carregando_ent);
-
-    if (stats.pacotes_entregues >= cenario->total_pacotes) {
+    if (entregues >= cenario->total_pacotes) {
         printf("\ntodos os %d pacotes foram entregues nos pontos D.\n",
                cenario->total_pacotes);
     } else {
         printf("\nfluxo incompleto: %d de %d pacotes entregues.\n",
-               stats.pacotes_entregues, cenario->total_pacotes);
+               entregues, cenario->total_pacotes);
     }
 
     for (int i = 0; i < cenario->num_estacoes; i++) {
@@ -341,6 +424,7 @@ int main(int argc, char **argv)
     }
     esteira_destruir(&esteira);
     pthread_mutex_destroy(&stats.mutex);
+    pthread_mutex_destroy(&mutex_encerrar);
     mapa_destruir(mapa);
     return 0;
 }
