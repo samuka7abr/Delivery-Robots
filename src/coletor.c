@@ -8,6 +8,7 @@ void coletor_inicializar(Coletor *coletor, Robo *robo, Posicao entrada)
     coletor->estado = COLETOR_OCIOSO;
     coletor->estacao_alvo = -1;
     coletor->entrada = entrada;
+    coletor->base = robo->posicao;
 }
 
 static int distancia_manhattan(Posicao a, Posicao b)
@@ -15,28 +16,6 @@ static int distancia_manhattan(Posicao a, Posicao b)
     int dx = a.x > b.x ? a.x - b.x : b.x - a.x;
     int dy = a.y > b.y ? a.y - b.y : b.y - a.y;
     return dx + dy;
-}
-
-/* Um passo greedy em direção ao alvo: reduz primeiro o eixo mais distante e,
- * se ele estiver bloqueado, tenta o outro. Sem desvio de obstáculos — os
- * cenários atuais não têm paredes internas. Retorna true se o robô se moveu. */
-static bool passo_em_direcao(Robo *robo, Mapa *mapa, Posicao alvo)
-{
-    int dx = alvo.x - robo->posicao.x;
-    int dy = alvo.y - robo->posicao.y;
-    int sx = (dx > 0) - (dx < 0);
-    int sy = (dy > 0) - (dy < 0);
-    int mx = dx < 0 ? -dx : dx;
-    int my = dy < 0 ? -dy : dy;
-
-    if (mx >= my && sx != 0) {
-        if (robo_mover(robo, mapa, sx, 0)) return true;
-        if (sy != 0 && robo_mover(robo, mapa, 0, sy)) return true;
-    } else {
-        if (sy != 0 && robo_mover(robo, mapa, 0, sy)) return true;
-        if (sx != 0 && robo_mover(robo, mapa, sx, 0)) return true;
-    }
-    return false;
 }
 
 /* Primeira estação (em ordem) com pacote aguardando. -1 se todas vazias. */
@@ -57,7 +36,13 @@ ResultadoColeta coletor_passo(Coletor *coletor, Mapa *mapa, Estacao *estacoes,
         case COLETOR_OCIOSO: {
             int alvo = escolher_estacao(estacoes, num_estacoes);
             if (alvo < 0) {
-                return COLETA_OCIOSO;
+                /* sem estação com pacote: recua para a base para não bloquear a
+                 * vizinhança do in aos coletores que ainda carregam pacote */
+                if (distancia_manhattan(coletor->robo->posicao, coletor->base) == 0 ||
+                    !robo_passo_em_direcao(coletor->robo, mapa, coletor->base)) {
+                    return COLETA_OCIOSO;
+                }
+                return COLETA_ANDANDO;
             }
             coletor->estacao_alvo = alvo;
             coletor->estado = COLETOR_INDO_ESTACAO;
@@ -77,7 +62,7 @@ ResultadoColeta coletor_passo(Coletor *coletor, Mapa *mapa, Estacao *estacoes,
                 coletor->estado = COLETOR_INDO_ESTEIRA;
                 return COLETA_COLETOU;
             }
-            if (!passo_em_direcao(coletor->robo, mapa, estacao->posicao)) {
+            if (!robo_passo_em_direcao(coletor->robo, mapa, estacao->posicao)) {
                 return COLETA_BLOQUEADO;
             }
             return COLETA_ANDANDO;
@@ -91,7 +76,7 @@ ResultadoColeta coletor_passo(Coletor *coletor, Mapa *mapa, Estacao *estacoes,
                 coletor->estado = COLETOR_OCIOSO;
                 return COLETA_INSERIU;
             }
-            if (!passo_em_direcao(coletor->robo, mapa, coletor->entrada)) {
+            if (!robo_passo_em_direcao(coletor->robo, mapa, coletor->entrada)) {
                 return COLETA_BLOQUEADO;
             }
             return COLETA_ANDANDO;
