@@ -22,16 +22,26 @@ void estacao_destruir(Estacao *estacao)
     pthread_mutex_destroy(&estacao->mutex);
 }
 
-/* leitura instantânea, sem lock: com threads o valor pode mudar logo em
- * seguida - quem garante a decisão é o retorno de enfileirar/desenfileirar */
-bool estacao_fila_vazia(const Estacao *estacao)
+bool estacao_fila_vazia(Estacao *estacao)
 {
-    return estacao->total == 0;
+    if (estacao == NULL) {
+        return true;
+    }
+    pthread_mutex_lock(&estacao->mutex);
+    bool vazia = estacao->total == 0;
+    pthread_mutex_unlock(&estacao->mutex);
+    return vazia;
 }
 
-bool estacao_fila_cheia(const Estacao *estacao)
+bool estacao_fila_cheia(Estacao *estacao)
 {
-    return estacao->total == MAX_FILA_ESTACAO;
+    if (estacao == NULL) {
+        return false;
+    }
+    pthread_mutex_lock(&estacao->mutex);
+    bool cheia = estacao->total == MAX_FILA_ESTACAO;
+    pthread_mutex_unlock(&estacao->mutex);
+    return cheia;
 }
 
 bool estacao_enfileirar(Estacao *estacao, Pacote *pacote)
