@@ -53,6 +53,14 @@ Pacote *esteira_retirar(Esteira *esteira)
     return pacote;
 }
 
+bool esteira_saida_ocupada(const Esteira *esteira)
+{
+    if (esteira == NULL) {
+        return false;
+    }
+    return esteira->posicoes[esteira->tamanho - 1] != NULL;
+}
+
 int esteira_total(const Esteira *esteira)
 {
     if (esteira == NULL) {
