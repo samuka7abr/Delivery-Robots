@@ -59,10 +59,10 @@ static void teste_sem_saida(void)
     Robo r;
     robo_inicializar(&r, 0, ROBO_COLETOR, (Posicao){ 2, 2 }, m);
     /* cerca as quatro células vizinhas */
-    mapa_ocupar(m, (Posicao){ 1, 2 });
-    mapa_ocupar(m, (Posicao){ 3, 2 });
-    mapa_ocupar(m, (Posicao){ 2, 1 });
-    mapa_ocupar(m, (Posicao){ 2, 3 });
+    mapa_tentar_ocupar(m, (Posicao){ 1, 2 });
+    mapa_tentar_ocupar(m, (Posicao){ 3, 2 });
+    mapa_tentar_ocupar(m, (Posicao){ 2, 1 });
+    mapa_tentar_ocupar(m, (Posicao){ 2, 3 });
 
     verificar(!robo_passo_em_direcao(&r, m, (Posicao){ 0, 2 }),
               "não se move quando está totalmente cercado");

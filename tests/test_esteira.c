@@ -28,6 +28,7 @@ static void teste_inicializacao(void)
               "aceita o tamanho do cenário 0");
     verificar(e.tamanho == c->tamanho_esteira && esteira_total(&e) == 0,
               "esteira respeita o tamanho do cenário e começa vazia");
+    esteira_destruir(&e);
 }
 
 static void teste_insercao(void)
@@ -45,6 +46,7 @@ static void teste_insercao(void)
     Pacote q = { 1, PACOTE_AGUARDANDO, 0 };
     verificar(!esteira_inserir(&e, &q), "recusa inserir com a entrada ocupada");
     verificar(esteira_total(&e) == 1, "pacote recusado não entra");
+    esteira_destruir(&e);
 }
 
 static void teste_avanco(void)
@@ -64,6 +66,7 @@ static void teste_avanco(void)
     verificar(!esteira_avancar(&e), "pacote em out não avança (espera retirada)");
     verificar(e.posicoes[3] == &p && esteira_total(&e) == 1,
               "pacote permanece em out");
+    esteira_destruir(&e);
 }
 
 static void teste_capacidade_por_posicao(void)
@@ -92,6 +95,7 @@ static void teste_capacidade_por_posicao(void)
     verificar(esteira_avancar(&e), "retirada libera o avanço dos demais");
     verificar(e.posicoes[1] == &c && e.posicoes[2] == &b && e.posicoes[0] == NULL,
               "cada pacote avançou exatamente uma posição");
+    esteira_destruir(&e);
 }
 
 static void teste_retirada(void)
@@ -109,6 +113,7 @@ static void teste_retirada(void)
               "retira o pacote e a esteira esvazia");
     verificar(retirado->estado == PACOTE_NA_ESTEIRA,
               "retirar não muda o estado (decisão fica com o entregador)");
+    esteira_destruir(&e);
 }
 
 static void teste_fluxo_completo(void)
@@ -143,6 +148,7 @@ static void teste_fluxo_completo(void)
     verificar(retirados == 30, "todos os pacotes atravessam a esteira");
     verificar(ordem_ok, "pacotes saem na ordem em que entraram");
     verificar(esteira_total(&e) == 0, "esteira termina vazia");
+    esteira_destruir(&e);
 }
 
 static void teste_null_safety(void)

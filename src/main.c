@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <unistd.h>
+#include <pthread.h>
 
 #include "idp.h"
 #include "cenario.h"
@@ -9,6 +11,10 @@
 #include "esteira.h"
 #include "coletor.h"
 #include "entregador.h"
+
+#ifndef TICK_US
+#define TICK_US 100000 /* 100 ms por unidade de tempo; -DTICK_US acelera em testes */
+#endif
 
 /* Render textual provisório (a interface real é a Issue #10). */
 static char celula_char(TipoCelula tipo)
@@ -31,6 +37,130 @@ static void imprimir_mapa(const Mapa *mapa)
         putchar('\n');
     }
 }
+
+/* --- encerramento coordenado ------------------------------------------- */
+
+static pthread_mutex_t mutex_encerrar = PTHREAD_MUTEX_INITIALIZER;
+static bool encerrar = false;
+
+static bool deve_encerrar(void)
+{
+    pthread_mutex_lock(&mutex_encerrar);
+    bool fim = encerrar;
+    pthread_mutex_unlock(&mutex_encerrar);
+    return fim;
+}
+
+static void sinalizar_encerramento(void)
+{
+    pthread_mutex_lock(&mutex_encerrar);
+    encerrar = true;
+    pthread_mutex_unlock(&mutex_encerrar);
+}
+
+/* --- estatísticas compartilhadas --------------------------------------- */
+
+static Estatisticas stats;
+
+static void stats_variar_aguardando(int delta)
+{
+    pthread_mutex_lock(&stats.mutex);
+    stats.pacotes_aguardando += delta;
+    pthread_mutex_unlock(&stats.mutex);
+}
+
+static void stats_variar_na_esteira(int delta)
+{
+    pthread_mutex_lock(&stats.mutex);
+    stats.pacotes_na_esteira += delta;
+    pthread_mutex_unlock(&stats.mutex);
+}
+
+static void stats_somar_entregue(void)
+{
+    pthread_mutex_lock(&stats.mutex);
+    stats.pacotes_entregues++;
+    pthread_mutex_unlock(&stats.mutex);
+}
+
+/* --- threads das entidades --------------------------------------------- */
+
+typedef struct {
+    Gerador *gerador;
+} ArgsGerador;
+
+static void *thread_gerador(void *arg)
+{
+    ArgsGerador *a = arg;
+    while (!deve_encerrar()) {
+        ResultadoGeracao r = gerador_gerar(a->gerador, NULL);
+        if (r == GERACAO_OK) {
+            stats_variar_aguardando(+1);
+        } else if (r == GERACAO_CONCLUIDA) {
+            break;
+        }
+        /* GERACAO_SEM_ESPACO: espera os coletores drenarem e tenta de novo */
+        usleep(TICK_US);
+    }
+    return NULL;
+}
+
+static void *thread_esteira(void *arg)
+{
+    Esteira *esteira = arg;
+    while (!deve_encerrar()) {
+        esteira_avancar(esteira);
+        usleep(TICK_US);
+    }
+    return NULL;
+}
+
+typedef struct {
+    Coletor *coletor;
+    Mapa *mapa;
+    Estacao *estacoes;
+    int num_estacoes;
+    Esteira *esteira;
+} ArgsColetor;
+
+static void *thread_coletor(void *arg)
+{
+    ArgsColetor *a = arg;
+    while (!deve_encerrar()) {
+        ResultadoColeta r = coletor_passo(a->coletor, a->mapa, a->estacoes,
+                                          a->num_estacoes, a->esteira);
+        if (r == COLETA_COLETOU) {
+            stats_variar_aguardando(-1);
+        } else if (r == COLETA_INSERIU) {
+            stats_variar_na_esteira(+1);
+        }
+        usleep(TICK_US / 2);
+    }
+    return NULL;
+}
+
+typedef struct {
+    Entregador *entregador;
+    Mapa *mapa;
+    Esteira *esteira;
+} ArgsEntregador;
+
+static void *thread_entregador(void *arg)
+{
+    ArgsEntregador *a = arg;
+    while (!deve_encerrar()) {
+        ResultadoEntrega r = entregador_passo(a->entregador, a->mapa, a->esteira);
+        if (r == ENTREGA_RETIROU) {
+            stats_variar_na_esteira(-1);
+        } else if (r == ENTREGA_ENTREGOU) {
+            stats_somar_entregue();
+        }
+        usleep(TICK_US / 2);
+    }
+    return NULL;
+}
+
+/* ------------------------------------------------------------------------ */
 
 int main(int argc, char **argv)
 {
@@ -76,6 +206,7 @@ int main(int argc, char **argv)
         Posicao inicial = { 2, 1 + i };
         if (!robo_inicializar(&robos[i], i, ROBO_COLETOR, inicial, mapa)) {
             fprintf(stderr, "falha ao posicionar o coletor %d\n", i);
+            esteira_destruir(&esteira);
             mapa_destruir(mapa);
             return 1;
         }
@@ -105,6 +236,7 @@ int main(int argc, char **argv)
         Posicao inicial = { 3 * cenario->largura_mapa / 4 + 1, 1 + i };
         if (!robo_inicializar(&robos[idx], idx, ROBO_ENTREGADOR, inicial, mapa)) {
             fprintf(stderr, "falha ao posicionar o entregador %d\n", i);
+            esteira_destruir(&esteira);
             mapa_destruir(mapa);
             return 1;
         }
@@ -112,62 +244,60 @@ int main(int argc, char **argv)
                                pontos[i % num_pontos].posicao);
     }
 
+    stats.pacotes_aguardando = 0;
+    stats.pacotes_na_esteira = 0;
+    stats.pacotes_entregues = 0;
+    stats.tempo_execucao_seg = 0.0;
+    pthread_mutex_init(&stats.mutex, NULL);
+
     printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, %d entregadores, "
            "%d pontos D, esteira %d, %d pacotes\n\n",
            indice, cenario->largura_mapa, cenario->altura_mapa,
            cenario->num_estacoes, num_coletores, num_entregadores, num_pontos,
            cenario->tamanho_esteira, cenario->total_pacotes);
 
-    /* laço sequencial: a cada tick gera um pacote, cada coletor e cada
-     * entregador dá um passo do seu ciclo e a esteira avança. Encerra quando
-     * todos os pacotes foram entregues nos pontos D — ou, por segurança, quando
-     * não há mais progresso possível em nenhuma entidade. */
-    int inseridos = 0;
-    int entregues = 0;
-    int ticks = 0;
-    const int ticks_max = 20000;
-    while (ticks < ticks_max) {
-        bool progresso = false;
+    pthread_t th_gerador, th_esteira;
+    ArgsGerador args_gerador = { &gerador };
+    pthread_create(&th_gerador, NULL, thread_gerador, &args_gerador);
+    pthread_create(&th_esteira, NULL, thread_esteira, &esteira);
 
-        if (gerador_gerar(&gerador, NULL) == GERACAO_OK) {
-            progresso = true;
-        }
+    ArgsColetor args_coletores[MAX_ROBOS];
+    for (int i = 0; i < num_coletores; i++) {
+        args_coletores[i] = (ArgsColetor){ &coletores[i], mapa, estacoes,
+                                           cenario->num_estacoes, &esteira };
+        pthread_create(&robos[i].thread, NULL, thread_coletor,
+                       &args_coletores[i]);
+    }
 
-        for (int i = 0; i < num_coletores; i++) {
-            ResultadoColeta r = coletor_passo(&coletores[i], mapa, estacoes,
-                                              cenario->num_estacoes, &esteira);
-            if (r == COLETA_INSERIU) {
-                inseridos++;
-                progresso = true;
-            } else if (r == COLETA_ANDANDO || r == COLETA_COLETOU) {
-                progresso = true;
-            }
-        }
+    ArgsEntregador args_entregadores[MAX_ROBOS];
+    for (int i = 0; i < num_entregadores; i++) {
+        int idx = num_coletores + i;
+        args_entregadores[i] = (ArgsEntregador){ &entregadores[i], mapa, &esteira };
+        pthread_create(&robos[idx].thread, NULL, thread_entregador,
+                       &args_entregadores[i]);
+    }
 
-        for (int i = 0; i < num_entregadores; i++) {
-            ResultadoEntrega r = entregador_passo(&entregadores[i], mapa, &esteira);
-            if (r == ENTREGA_ENTREGOU) {
-                entregues++;
-                progresso = true;
-            } else if (r == ENTREGA_ANDANDO || r == ENTREGA_RETIROU) {
-                progresso = true;
-            }
-        }
-
-        /* o avanço da esteira também é progresso: um pacote a caminho do out
-         * (com todos ociosos) ainda vai render entregas, então não pode
-         * disparar o encerramento por "sem progresso" cedo demais. */
-        if (esteira_avancar(&esteira)) {
-            progresso = true;
-        }
-        ticks++;
-
+    /* supervisão: encerra quando todos os pacotes foram entregues. Como rede de
+     * segurança contra um eventual travamento, há também um teto de iterações. */
+    const int max_iteracoes = 6000;
+    for (int it = 0; it < max_iteracoes; it++) {
+        usleep(TICK_US);
+        pthread_mutex_lock(&stats.mutex);
+        int entregues = stats.pacotes_entregues;
+        pthread_mutex_unlock(&stats.mutex);
         if (entregues >= cenario->total_pacotes) {
             break;
         }
-        if (!progresso) {
-            break;
-        }
+    }
+    sinalizar_encerramento();
+
+    pthread_join(th_gerador, NULL);
+    pthread_join(th_esteira, NULL);
+    for (int i = 0; i < num_coletores; i++) {
+        pthread_join(robos[i].thread, NULL);
+    }
+    for (int i = 0; i < num_entregadores; i++) {
+        pthread_join(robos[num_coletores + i].thread, NULL);
     }
 
     imprimir_mapa(mapa);
@@ -189,24 +319,28 @@ int main(int argc, char **argv)
         aguardando += estacoes[i].total;
     }
 
-    printf("\nApós %d ticks:\n", ticks);
+    printf("\nApós o encerramento:\n");
     printf("  pacotes gerados:              %d\n",
            cenario->total_pacotes - gerador_pacotes_restantes(&gerador));
-    printf("  inseridos na esteira:         %d\n", inseridos);
-    printf("  entregues nos pontos D:       %d\n", entregues);
+    printf("  entregues nos pontos D:       %d\n", stats.pacotes_entregues);
     printf("  atualmente na esteira:        %d\n", esteira_total(&esteira));
     printf("  aguardando nas estações:      %d\n", aguardando);
     printf("  em transporte (coletores):    %d\n", carregando_col);
     printf("  em transporte (entregadores): %d\n", carregando_ent);
 
-    if (entregues >= cenario->total_pacotes) {
+    if (stats.pacotes_entregues >= cenario->total_pacotes) {
         printf("\ntodos os %d pacotes foram entregues nos pontos D.\n",
                cenario->total_pacotes);
     } else {
-        printf("\nfluxo incompleto: %d de %d pacotes entregues em %d ticks.\n",
-               entregues, cenario->total_pacotes, ticks);
+        printf("\nfluxo incompleto: %d de %d pacotes entregues.\n",
+               stats.pacotes_entregues, cenario->total_pacotes);
     }
 
+    for (int i = 0; i < cenario->num_estacoes; i++) {
+        estacao_destruir(&estacoes[i]);
+    }
+    esteira_destruir(&esteira);
+    pthread_mutex_destroy(&stats.mutex);
     mapa_destruir(mapa);
     return 0;
 }

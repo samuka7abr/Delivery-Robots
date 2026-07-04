@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g -Iinclude -MMD -MP
+CFLAGS = -Wall -Wextra -g -Iinclude -MMD -MP -pthread
 
 SRC = $(wildcard src/*.c)
 OBJ = $(patsubst src/%.c,build/%.o,$(SRC))

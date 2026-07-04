@@ -5,9 +5,10 @@
 #include "mapa.h"
 #include "estacao.h"
 
-/* Gerador sequencial de pacotes: cada chamada a gerador_gerar produz um
- * pacote na estação da vez. Vira thread própria na Issue #9. Os pacotes
- * vivem no pool fixo do gerador — nada de malloc por pacote. */
+/* Gerador de pacotes: cada chamada a gerador_gerar
+ * produz um pacote na estação da vez.
+ * Roda em thread própria, com o ritmo controlado pelo laço da thread
+ * (main.c) */
 typedef struct {
     Estacao *estacoes;
     int num_estacoes;
@@ -36,8 +37,9 @@ bool gerador_inicializar(Gerador *gerador, const Cenario *cenario,
 /* Gera o próximo pacote seguindo round-robin entre as estações: começa na
  * estação da vez e, se a fila dela estiver cheia, tenta as seguintes até
  * dar uma volta completa. Em GERACAO_OK, *out (quando não-NULL) recebe o
- * pacote gerado; nos demais desfechos *out vira NULL. O ritmo de geração
- * (intervalos) fica pra Issue #9. */
+ * pacote gerado; nos demais desfechos *out vira NULL. 
+ * o intervalo entre gerações é responsabilidade da thread que chama,
+ * não da função */
 ResultadoGeracao gerador_gerar(Gerador *gerador, Pacote **out);
 
 /* Quantos pacotes do cenário ainda faltam gerar. */

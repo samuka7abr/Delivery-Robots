@@ -63,6 +63,8 @@ static void teste_sem_pacote(void)
               "sem pacote na estação o coletor fica ocioso");
     verificar(c.estado == COLETOR_OCIOSO, "estado permanece ocioso");
 
+    estacao_destruir(&estacao);
+    esteira_destruir(&e);
     mapa_destruir(m);
 }
 
@@ -97,6 +99,8 @@ static void teste_ciclo_completo(void)
     verificar(robo.pacote_atual == NULL && c.estado == COLETOR_OCIOSO,
               "coletor entrega e volta a ficar ocioso");
 
+    estacao_destruir(&estacao);
+    esteira_destruir(&e);
     mapa_destruir(m);
 }
 
@@ -141,6 +145,8 @@ static void teste_um_pacote_por_vez(void)
     verificar(e.posicoes[0] == &a, "só o primeiro pacote entrou na esteira");
     verificar(estacao.total == 1, "segundo pacote continua aguardando após a entrega");
 
+    estacao_destruir(&estacao);
+    esteira_destruir(&e);
     mapa_destruir(m);
 }
 
@@ -179,6 +185,8 @@ static void teste_aguarda_in_ocupado(void)
     verificar(e.posicoes[0] == &p && robo.pacote_atual == NULL,
               "pacote antes retido entra na esteira");
 
+    estacao_destruir(&estacao);
+    esteira_destruir(&e);
     mapa_destruir(m);
 }
 
