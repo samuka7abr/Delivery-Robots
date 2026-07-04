@@ -1,0 +1,266 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+
+\sloppy
+
+\title{Simulação Concorrente de um Centro de\\ Distribuição Automatizado (IDP)}
+
+\author{Samuel Abrão\inst{1}, Andreia Tiveron\inst{1}, João Genaro\inst{1}}
+
+\address{Instituto Brasileiro de Ensino, Desenvolvimento e Pesquisa (IDP)\\
+  Asa Norte -- Brasília -- DF -- Brasil
+  \email{samuelabrao2006@gmail.com, andreiabtiveron@gmail.com,}\\
+  \texttt{\footnotesize genastrb@gmail.com}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This report describes a concurrent simulation, written in C with POSIX threads,
+of an automated distribution center. Collector and deliverer robots share a
+grid map, pickup stations and a bounded conveyor belt, moving one cell at a time
+under the physical constraint that two entities never occupy the same cell. We
+detail the thread organization, the shared resources, the identified critical
+sections, the synchronization mechanisms (fine-grained mutexes and a condition
+variable) and the main design decisions, followed by the build and run guide for
+Linux (Ubuntu 24.04).
+\end{abstract}
+
+\begin{resumo}
+Este documento descreve uma simulação concorrente, escrita em C com \textit{threads}
+POSIX, de um centro de distribuição automatizado. Robôs coletores e entregadores
+compartilham um mapa em grade, estações de coleta e uma esteira transportadora
+limitada, movendo-se célula a célula sob a restrição física de que duas entidades
+nunca ocupam a mesma célula. Detalham-se a organização das \textit{threads}, os
+recursos compartilhados, as seções críticas identificadas, os mecanismos de
+sincronização (\textit{mutexes} de granularidade fina e uma variável de condição)
+e as principais decisões de projeto, seguidos do guia de compilação e execução em
+Linux (Ubuntu 24.04).
+\end{resumo}
+
+\section{Introdução}
+
+A simulação reproduz o centro de distribuição da IDP, dividido em três regiões:
+a \textbf{área de coleta}, com estações geradoras de pacotes (pontos \texttt{P});
+a \textbf{esteira transportadora}, ligando a entrada (\texttt{in}) à saída
+(\texttt{out}); e a \textbf{área de expedição}, com pontos de despacho
+(\texttt{D}). O fluxo de um pacote é: o \emph{gerador} o cria em uma estação
+\texttt{P}; um \emph{robô coletor} o transporta até \texttt{in}; a \emph{esteira}
+o desloca uma posição por unidade de tempo até \texttt{out}; e um \emph{robô
+entregador} o retira e o leva a um ponto \texttt{D}. A restrição física central é
+que \emph{duas entidades nunca ocupam a mesma célula do mapa}. A simulação termina
+quando a quantidade de pacotes do cenário é entregue, ou quando o usuário pressiona
+\texttt{q}.
+
+O sistema foi escrito em C com \texttt{pthreads}~\cite{tanenbaum} e interface em
+\texttt{ncurses}~\cite{ncurses}. Seguindo a recomendação do enunciado, primeiro
+foi construída e validada uma versão sequencial e só então introduziu-se a
+concorrência. O código é organizado em módulos independentes que correspondem aos
+elementos exigidos: \texttt{gerador} (Gerador de Pacotes), \texttt{coletor}
+(Robôs Coletores), \texttt{esteira} (Esteira Transportadora), \texttt{entregador}
+(Robôs Entregadores) e \texttt{interface} (Interface); os módulos \texttt{mapa} e
+\texttt{estacao} implementam os recursos compartilhados de base. O mapa é
+representado por duas matrizes: uma de tipos de célula (livre, parede, estação
+\texttt{P}, ponto \texttt{D}) e uma de ocupação; cada pacote carrega um estado
+(\emph{aguardando}, \emph{transportado}, \emph{na esteira}, \emph{entregue}).
+São oferecidos três cenários estáticos, selecionáveis por argumento de linha de
+comando ou por menu (Tabela~\ref{tab:cenarios}).
+
+\begin{table}[ht]
+\centering
+\caption{Parâmetros dos três cenários estáticos.}
+\label{tab:cenarios}
+\small
+\begin{tabular}{lccc}
+\hline
+\textbf{Parâmetro} & \textbf{0 -- Básico} & \textbf{1 -- Intermediário} & \textbf{2 -- Estresse} \\
+\hline
+Mapa (largura $\times$ altura) & $20\times10$ & $30\times15$ & $40\times20$ \\
+Robôs coletores        & 2 & 4 & 6 \\
+Robôs entregadores     & 2 & 3 & 5 \\
+Estações \texttt{P}    & 2 & 3 & 4 \\
+Pontos \texttt{D}      & 2 & 3 & 4 \\
+Tamanho da esteira     & 8 & 12 & 20 \\
+Total de pacotes       & 20 & 50 & 100 \\
+\hline
+\end{tabular}
+\end{table}
+
+\section{Organização das Threads}
+
+Cada entidade da simulação é uma \textit{thread} POSIX independente, criada com
+\texttt{pthread\_create} e finalizada com \texttt{pthread\_join} (nenhuma
+\textit{thread} é \textit{detached}). A \textit{thread} principal não modela uma
+entidade: ela desenha a interface (é a única a chamar \texttt{ncurses}),
+acompanha o critério de término e faz o \texttt{join} das demais. Cada
+\textit{thread} de entidade executa um laço que dorme por um passo de tempo
+(\texttt{TICK\_US}, 100\,ms; coletores e entregadores usam metade do intervalo) e
+verifica, a cada iteração, uma \textit{flag} global de encerramento.
+
+\begin{itemize}
+  \item \textbf{Gerador} (1 \textit{thread}): a cada passo cria um pacote em uma
+        estação \texttt{P}, em \textit{round-robin} com \textit{liveness} (busca
+        outra estação com espaço se a atual estiver cheia);
+  \item \textbf{Esteira} (1 \textit{thread}): a cada passo avança os pacotes uma
+        posição rumo a \texttt{out}, se a posição seguinte estiver livre;
+  \item \textbf{Coletores} ($N$ \textit{threads}): autômato de três estados
+        --- \texttt{OCIOSO} (procura estação com pacote), \texttt{INDO\_ESTACAO}
+        (desloca-se e coleta) e \texttt{INDO\_ESTEIRA} (leva o pacote até
+        \texttt{in} e o insere; se \texttt{in} estiver ocupada, aguarda);
+  \item \textbf{Entregadores} ($M$ \textit{threads}): autômato de três estados
+        --- \texttt{OCIOSO} (espera pacote em \texttt{out}), \texttt{INDO\_ESTEIRA}
+        (vai a \texttt{out} e retira) e \texttt{INDO\_DESPACHO} (leva o pacote a
+        um ponto \texttt{D} e o contabiliza).
+\end{itemize}
+
+O total é $2 + N + M$ \textit{threads} de entidades mais a principal (por exemplo,
+seis \textit{threads} de entidades no cenário básico). O encerramento é
+coordenado: uma \textit{flag} booleana global, protegida por \texttt{mutex}, é
+consultada por cada \textit{thread} a cada iteração e sinalizada pela principal
+quando todos os pacotes são entregues ou o usuário tecla \texttt{q}; em seguida,
+todas as \textit{threads} são unidas com \texttt{pthread\_join}.
+
+\section{Recursos Compartilhados}
+
+Cada recurso possui trava própria, de granularidade fina, em vez de um único
+\textit{lock} global, permitindo progresso paralelo. A Tabela~\ref{tab:recursos}
+resume o mapeamento recurso $\rightarrow$ mecanismo.
+
+\begin{table}[ht]
+\centering
+\caption{Recursos compartilhados e mecanismos de sincronização.}
+\label{tab:recursos}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lll}
+\hline
+\textbf{Recurso} & \textbf{Estrutura} & \textbf{Mecanismo} \\
+\hline
+Ocupação das células do mapa & \texttt{Mapa.ocupada} & \texttt{Mapa.mutex} (global do mapa) \\
+Estações de coleta (filas FIFO) & \texttt{Estacao.fila} & um \texttt{Estacao.mutex} por estação \\
+Posições da esteira (\texttt{in}..\texttt{out}) & \texttt{Esteira.posicoes} & \texttt{Esteira.mutex} + \texttt{Esteira.cond} \\
+Pontos de despacho \texttt{D} & células do mapa & via \texttt{Mapa.mutex} \\
+Contadores/estatísticas & \texttt{Estatisticas} & \texttt{Estatisticas.mutex} \\
+\textit{Flag} de encerramento & variável global & \texttt{mutex\_encerrar} \\
+\hline
+\end{tabular}
+\end{table}
+
+A ocupação do mapa é o recurso mais disputado: todo robô a lê e a escreve ao se
+mover. As estações são filas FIFO acessadas pelo gerador (que enfileira) e pelos
+coletores (que desenfileiram). A esteira é um \textit{buffer} limitado de uma
+posição por célula. Os pontos \texttt{D} não têm trava própria: são células do
+mapa e sua ocupação é coordenada pelo \texttt{Mapa.mutex}. Os contadores de
+pacotes aguardando, na esteira e entregues, além do tempo de execução, são
+atualizados por várias \textit{threads} e lidos pela interface.
+
+\section{Seções Críticas}
+
+As seções críticas identificadas e protegidas são:
+
+\begin{itemize}
+  \item \textbf{Ocupar uma célula (\textit{test-and-set}).} Verificar que a célula
+        de destino está livre e marcá-la como ocupada precisa ser \emph{atômico};
+        caso contrário, dois robôs poderiam ocupar a mesma célula. A verificação e
+        a marcação ocorrem sob \texttt{Mapa.mutex}, e o passo do robô libera a
+        célula de origem e ocupa a de destino dentro do mesmo \textit{lock},
+        preservando a invariante física.
+  \item \textbf{Fila da estação.} Enfileirar (gerador) e desenfileirar
+        (coletores) ocorrem sob \texttt{Estacao.mutex}; vários coletores podem
+        disputar a mesma fila simultaneamente.
+  \item \textbf{Movimentação de pacotes na esteira.} Inserir em \texttt{in},
+        avançar todas as posições (varrendo de \texttt{out} para \texttt{in} para
+        não mover um pacote duas casas no mesmo passo) e retirar de \texttt{out}
+        ocorrem sob \texttt{Esteira.mutex}; as consultas (saída ocupada, total de
+        pacotes) também travam, garantindo leitura consistente.
+  \item \textbf{Contadores globais.} Incrementos e decrementos dos pacotes
+        aguardando, na esteira e entregues ocorrem sob \texttt{Estatisticas.mutex}.
+  \item \textbf{Leitura da interface.} Cada parte mutável do quadro é copiada
+        (\textit{snapshot}) sob o \textit{mutex} do recurso correspondente antes de
+        ser desenhada, de modo que a tela nunca exibe um estado inconsistente.
+\end{itemize}
+
+\section{Mecanismos de Sincronização}
+
+O mecanismo básico é a exclusão mútua com \texttt{pthread\_mutex\_t}, aplicada com
+granularidade fina: um \textit{mutex} por recurso. A esteira mantém, além do
+\textit{mutex}, uma variável de condição (\texttt{Esteira.cond}), sinalizada com
+\texttt{pthread\_cond\_broadcast} a cada mudança de estado (inserção, avanço e
+retirada), pronta para suportar espera bloqueante; no ritmo atual, as entidades
+reavaliam o estado de forma temporizada (\texttt{usleep} por passo), sempre lendo
+o estado protegido pelo respectivo \textit{mutex}. Cada
+\texttt{pthread\_mutex\_init}/\texttt{pthread\_cond\_init} possui o
+\texttt{\_destroy} correspondente antes do término (a \textit{flag} de encerramento
+usa inicializador estático), e cada \texttt{pthread\_create} tem seu
+\texttt{pthread\_join}, evitando vazamento de recursos e \textit{threads}
+pendentes.
+
+\section{Decisões de Projeto}
+
+\begin{itemize}
+  \item \textbf{Desenvolvimento incremental.} A lógica de cada entidade foi escrita
+        como uma função de \emph{um passo} do seu autômato e validada de forma
+        sequencial; a concorrência foi introduzida depois, reutilizando o mesmo
+        passo como corpo do laço de cada \textit{thread}.
+  \item \textbf{Granularidade fina de travas.} Um \textit{mutex} por recurso, em vez
+        de um \textit{lock} global, para permitir progresso paralelo e reduzir
+        contenção.
+  \item \textbf{Navegação sem \textit{deadlock}.} Heurística gulosa (distância de
+        Manhattan) com desvio lateral quando o caminho está bloqueado; robôs
+        ociosos recuam a uma base para não obstruir \texttt{in}/\texttt{out},
+        evitando o travamento de dois robôs frente a frente no corredor.
+  \item \textbf{Memória previsível.} Pacotes e robôs vivem em vetores de tamanho
+        fixo (\texttt{MAX\_*}), sem \texttt{malloc} por entidade.
+  \item \textbf{\textit{Backpressure}.} Filas de coleta limitadas e gerador em
+        \textit{round-robin} com \textit{liveness}, que procura outra estação com
+        espaço em vez de desistir quando a primeira está cheia.
+  \item \textbf{Verificação.} Testes unitários por módulo (\texttt{make test}) e
+        detecção de condições de corrida com o \textit{ThreadSanitizer}
+        (\texttt{make test-tsan}).
+\end{itemize}
+
+\section{Guia de Compilação e Execução}
+
+Ambiente de referência: Linux (Ubuntu 24.04). Instalação das dependências
+(compilador, \textit{make} e a biblioteca \texttt{ncurses}):
+
+{\small
+\begin{verbatim}
+sudo apt install build-essential libncurses-dev
+\end{verbatim}
+}
+
+Compilação (\texttt{gcc} com \texttt{-Wall -Wextra -pthread} e \texttt{-lncurses}),
+execução e testes:
+
+{\small
+\begin{verbatim}
+make                # gera o executável em build/idp
+make run            # compila e executa (menu de cenários)
+./build/idp 0       # executa diretamente o cenário 0, 1 ou 2
+make test           # testes unitários dos módulos
+make test-tsan      # teste de concorrência sob ThreadSanitizer
+make clean          # remove artefatos de compilação
+\end{verbatim}
+}
+
+Em terminal interativo, a interface \texttt{ncurses} exibe o mapa, os robôs, a
+esteira e o painel (pacotes aguardando, na esteira, entregues e tempo de
+execução); tecle \texttt{q} para sair. Sem terminal interativo, o programa imprime
+um quadro final em texto com as mesmas informações, útil para validação
+automatizada.
+
+\begin{thebibliography}{9}
+\bibitem{tanenbaum} TANENBAUM, A. S. \textit{Sistemas Operacionais Modernos}.
+  3.~ed. São Paulo: Pearson Prentice Hall, 2010.
+\bibitem{ncurses} FREE SOFTWARE FOUNDATION. \textit{ncurses --- A Free Software
+  emulation of curses in System V Release 6.6}. Disponível em:
+  \url{https://invisible-island.net/ncurses/announce.html}.
+\end{thebibliography}
+
+\end{document}
