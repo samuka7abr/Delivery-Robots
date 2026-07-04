@@ -4,7 +4,7 @@
 
 bool robo_inicializar(Robo *robo, int id, TipoRobo tipo, Posicao inicial, Mapa *mapa)
 {
-    if (!mapa_celula_livre(mapa, inicial)) {
+    if (robo == NULL || !mapa_tentar_ocupar(mapa, inicial)) {
         return false;
     }
 
@@ -12,8 +12,6 @@ bool robo_inicializar(Robo *robo, int id, TipoRobo tipo, Posicao inicial, Mapa *
     robo->tipo = tipo;
     robo->posicao = inicial;
     robo->pacote_atual = NULL;
-
-    mapa_ocupar(mapa, inicial);
     return true;
 }
 
@@ -27,12 +25,12 @@ bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy)
     }
 
     Posicao destino = { robo->posicao.x + dx, robo->posicao.y + dy };
-    if (!mapa_celula_livre(mapa, destino)) {
+    if (!mapa_tentar_ocupar(mapa, destino)) {
         return false;
     }
-
+    /* ocupa o destino antes de liberar a origem: o robô nunca fica sem
+     * célula, então outra thread não toma seu lugar no meio do passo */
     mapa_liberar(mapa, robo->posicao);
-    mapa_ocupar(mapa, destino);
     robo->posicao = destino;
     return true;
 }
