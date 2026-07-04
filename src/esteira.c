@@ -84,6 +84,17 @@ Pacote *esteira_retirar(Esteira *esteira)
     return pacote;
 }
 
+bool esteira_saida_ocupada(Esteira *esteira)
+{
+    if (esteira == NULL) {
+        return false;
+    }
+    pthread_mutex_lock(&esteira->mutex);
+    bool ocupada = esteira->posicoes[esteira->tamanho - 1] != NULL;
+    pthread_mutex_unlock(&esteira->mutex);
+    return ocupada;
+}
+
 int esteira_total(Esteira *esteira)
 {
     if (esteira == NULL) {

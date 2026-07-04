@@ -18,6 +18,10 @@ bool esteira_avancar(Esteira *esteira);
 /* nn muda o estado do pacote, quem decide é o entregador (#8) */
 Pacote *esteira_retirar(Esteira *esteira);
 
+/* true se há um pacote na saída (out) aguardando retirada; não remove nada.
+ * O entregador consulta isto para decidir se vale a pena ir até o out. */
+bool esteira_saida_ocupada(Esteira *esteira);
+
 int esteira_total(Esteira *esteira);
 
 #endif

@@ -23,6 +23,7 @@ typedef struct {
     EstadoColetor estado;
     int estacao_alvo;   /* índice da estação buscada (válido fora de OCIOSO) */
     Posicao entrada;    /* posição da entrada (in) da esteira no mapa */
+    Posicao base;       /* posição de espera; recua para cá quando sem trabalho */
 } Coletor;
 
 /* Desfecho de um passo do coletor. */

@@ -34,3 +34,31 @@ bool robo_mover(Robo *robo, Mapa *mapa, int dx, int dy)
     robo->posicao = destino;
     return true;
 }
+
+bool robo_passo_em_direcao(Robo *robo, Mapa *mapa, Posicao alvo)
+{
+    int dx = alvo.x - robo->posicao.x;
+    int dy = alvo.y - robo->posicao.y;
+    int sx = (dx > 0) - (dx < 0);
+    int sy = (dy > 0) - (dy < 0);
+    int mx = dx < 0 ? -dx : dx;
+    int my = dy < 0 ? -dy : dy;
+
+    /* primeiro os passos que aproximam do alvo, reduzindo o eixo mais distante */
+    if (mx >= my) {
+        if (sx != 0 && robo_mover(robo, mapa, sx, 0)) return true;
+        if (sy != 0 && robo_mover(robo, mapa, 0, sy)) return true;
+    } else {
+        if (sy != 0 && robo_mover(robo, mapa, 0, sy)) return true;
+        if (sx != 0 && robo_mover(robo, mapa, sx, 0)) return true;
+    }
+    /* já alinhado num eixo e bloqueado no outro: contorna de lado para não
+     * travar de frente com um robô vindo em sentido oposto no mesmo corredor */
+    if (sx == 0 && (robo_mover(robo, mapa, 1, 0) || robo_mover(robo, mapa, -1, 0))) {
+        return true;
+    }
+    if (sy == 0 && (robo_mover(robo, mapa, 0, 1) || robo_mover(robo, mapa, 0, -1))) {
+        return true;
+    }
+    return false;
+}

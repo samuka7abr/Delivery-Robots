@@ -10,6 +10,7 @@
 #include "gerador.h"
 #include "esteira.h"
 #include "coletor.h"
+#include "entregador.h"
 
 #ifndef TICK_US
 #define TICK_US 100000 /* 100 ms por unidade de tempo; -DTICK_US acelera em testes */
@@ -50,9 +51,6 @@ static bool deve_encerrar(void)
     return fim;
 }
 
-/* Hoje nenhuma thread dorme em cond var (coletores fazem polling via passo).
- * Quando o entregador (#8) dormir na cond da esteira esperando pacote no out,
- * este encerramento precisa ganhar um pthread_cond_broadcast na cond dela. */
 static void sinalizar_encerramento(void)
 {
     pthread_mutex_lock(&mutex_encerrar);
@@ -71,10 +69,17 @@ static void stats_variar_aguardando(int delta)
     pthread_mutex_unlock(&stats.mutex);
 }
 
-static void stats_somar_na_esteira(void)
+static void stats_variar_na_esteira(int delta)
 {
     pthread_mutex_lock(&stats.mutex);
-    stats.pacotes_na_esteira++;
+    stats.pacotes_na_esteira += delta;
+    pthread_mutex_unlock(&stats.mutex);
+}
+
+static void stats_somar_entregue(void)
+{
+    pthread_mutex_lock(&stats.mutex);
+    stats.pacotes_entregues++;
     pthread_mutex_unlock(&stats.mutex);
 }
 
@@ -127,7 +132,28 @@ static void *thread_coletor(void *arg)
         if (r == COLETA_COLETOU) {
             stats_variar_aguardando(-1);
         } else if (r == COLETA_INSERIU) {
-            stats_somar_na_esteira();
+            stats_variar_na_esteira(+1);
+        }
+        usleep(TICK_US / 2);
+    }
+    return NULL;
+}
+
+typedef struct {
+    Entregador *entregador;
+    Mapa *mapa;
+    Esteira *esteira;
+} ArgsEntregador;
+
+static void *thread_entregador(void *arg)
+{
+    ArgsEntregador *a = arg;
+    while (!deve_encerrar()) {
+        ResultadoEntrega r = entregador_passo(a->entregador, a->mapa, a->esteira);
+        if (r == ENTREGA_RETIROU) {
+            stats_variar_na_esteira(-1);
+        } else if (r == ENTREGA_ENTREGOU) {
+            stats_somar_entregue();
         }
         usleep(TICK_US / 2);
     }
@@ -167,15 +193,17 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /* entrada (in) da esteira no centro do mapa; os coletores partem da borda
-     * direita, coletam nas estações P (coluna x=1) e levam o pacote até aqui. */
-    Posicao entrada = { cenario->largura_mapa / 2, cenario->altura_mapa / 2 };
+    /* fluxo espacial esquerda -> direita: coleta à esquerda (estações P em x=1),
+     * entrada (in) da esteira no primeiro quarto e saída (out) no terceiro
+     * quarto — bem separadas para coletores e entregadores não disputarem as
+     * mesmas células. Os coletores partem da borda esquerda. */
+    Posicao entrada = { cenario->largura_mapa / 4, cenario->altura_mapa / 2 };
 
     Robo robos[MAX_ROBOS];
     Coletor coletores[MAX_ROBOS];
     int num_coletores = cenario->num_robos_coletores;
     for (int i = 0; i < num_coletores; i++) {
-        Posicao inicial = { cenario->largura_mapa - 2, 1 + i };
+        Posicao inicial = { 2, 1 + i };
         if (!robo_inicializar(&robos[i], i, ROBO_COLETOR, inicial, mapa)) {
             fprintf(stderr, "falha ao posicionar o coletor %d\n", i);
             esteira_destruir(&esteira);
@@ -185,17 +213,48 @@ int main(int argc, char **argv)
         coletor_inicializar(&coletores[i], &robos[i], entrada);
     }
 
+    /* lado da expedição: a saída (out) da esteira e os pontos de despacho D na
+     * borda direita, espalhados na vertical. Cada entregador atende um ponto D
+     * fixo (distribuídos em rodízio), partindo logo à direita do out. */
+    Posicao saida = { 3 * cenario->largura_mapa / 4, cenario->altura_mapa / 2 };
+
+    PontoDespacho pontos[MAX_PONTOS_D];
+    int num_pontos = cenario->num_pontos_despacho;
+    for (int i = 0; i < num_pontos; i++) {
+        Posicao pd = {
+            cenario->largura_mapa - 2,
+            (i + 1) * cenario->altura_mapa / (num_pontos + 1),
+        };
+        pontos[i].posicao = pd;
+        mapa_definir_tipo(mapa, pd, CELULA_PONTO_D);
+    }
+
+    Entregador entregadores[MAX_ROBOS];
+    int num_entregadores = cenario->num_robos_entregadores;
+    for (int i = 0; i < num_entregadores; i++) {
+        int idx = num_coletores + i;
+        Posicao inicial = { 3 * cenario->largura_mapa / 4 + 1, 1 + i };
+        if (!robo_inicializar(&robos[idx], idx, ROBO_ENTREGADOR, inicial, mapa)) {
+            fprintf(stderr, "falha ao posicionar o entregador %d\n", i);
+            esteira_destruir(&esteira);
+            mapa_destruir(mapa);
+            return 1;
+        }
+        entregador_inicializar(&entregadores[i], &robos[idx], saida,
+                               pontos[i % num_pontos].posicao);
+    }
+
     stats.pacotes_aguardando = 0;
     stats.pacotes_na_esteira = 0;
     stats.pacotes_entregues = 0;
     stats.tempo_execucao_seg = 0.0;
     pthread_mutex_init(&stats.mutex, NULL);
 
-    printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, "
-           "esteira %d, %d pacotes\n\n",
+    printf("Cenário %d: mapa %dx%d, %d estações P, %d coletores, %d entregadores, "
+           "%d pontos D, esteira %d, %d pacotes\n\n",
            indice, cenario->largura_mapa, cenario->altura_mapa,
-           cenario->num_estacoes, num_coletores, cenario->tamanho_esteira,
-           cenario->total_pacotes);
+           cenario->num_estacoes, num_coletores, num_entregadores, num_pontos,
+           cenario->tamanho_esteira, cenario->total_pacotes);
 
     pthread_t th_gerador, th_esteira;
     ArgsGerador args_gerador = { &gerador };
@@ -210,31 +269,25 @@ int main(int argc, char **argv)
                        &args_coletores[i]);
     }
 
-    /* Supervisão provisória até a #8 (entregadores): sem ninguém drenando o
-     * out, o fluxo estanca quando a esteira enche. Encerra quando os
-     * contadores ficam ~3s sem mudar, com teto de 60s. Com o entregador,
-     * isto vira: encerrar quando entregues >= cenario->total_pacotes. */
-    int aguardando_ant = -1;
-    int na_esteira_ant = -1;
-    int iteracoes_paradas = 0;
-    const int max_iteracoes = 600;
+    ArgsEntregador args_entregadores[MAX_ROBOS];
+    for (int i = 0; i < num_entregadores; i++) {
+        int idx = num_coletores + i;
+        args_entregadores[i] = (ArgsEntregador){ &entregadores[i], mapa, &esteira };
+        pthread_create(&robos[idx].thread, NULL, thread_entregador,
+                       &args_entregadores[i]);
+    }
+
+    /* supervisão: encerra quando todos os pacotes foram entregues. Como rede de
+     * segurança contra um eventual travamento, há também um teto de iterações. */
+    const int max_iteracoes = 6000;
     for (int it = 0; it < max_iteracoes; it++) {
         usleep(TICK_US);
         pthread_mutex_lock(&stats.mutex);
-        int aguardando = stats.pacotes_aguardando;
-        int na_esteira = stats.pacotes_na_esteira;
+        int entregues = stats.pacotes_entregues;
         pthread_mutex_unlock(&stats.mutex);
-
-        if (aguardando == aguardando_ant && na_esteira == na_esteira_ant) {
-            iteracoes_paradas++;
-            if (iteracoes_paradas >= 30) {
-                break;
-            }
-        } else {
-            iteracoes_paradas = 0;
+        if (entregues >= cenario->total_pacotes) {
+            break;
         }
-        aguardando_ant = aguardando;
-        na_esteira_ant = na_esteira;
     }
     sinalizar_encerramento();
 
@@ -243,13 +296,22 @@ int main(int argc, char **argv)
     for (int i = 0; i < num_coletores; i++) {
         pthread_join(robos[i].thread, NULL);
     }
+    for (int i = 0; i < num_entregadores; i++) {
+        pthread_join(robos[num_coletores + i].thread, NULL);
+    }
 
     imprimir_mapa(mapa);
 
-    int carregando = 0;
+    int carregando_col = 0;
     for (int i = 0; i < num_coletores; i++) {
         if (robos[i].pacote_atual != NULL) {
-            carregando++;
+            carregando_col++;
+        }
+    }
+    int carregando_ent = 0;
+    for (int i = 0; i < num_entregadores; i++) {
+        if (robos[num_coletores + i].pacote_atual != NULL) {
+            carregando_ent++;
         }
     }
     int aguardando = 0;
@@ -258,15 +320,20 @@ int main(int argc, char **argv)
     }
 
     printf("\nApós o encerramento:\n");
-    printf("  pacotes gerados:            %d\n",
+    printf("  pacotes gerados:              %d\n",
            cenario->total_pacotes - gerador_pacotes_restantes(&gerador));
-    printf("  inseridos na esteira:       %d\n", stats.pacotes_na_esteira);
-    printf("  atualmente na esteira:      %d\n", esteira_total(&esteira));
-    printf("  aguardando nas estações:    %d\n", aguardando);
-    printf("  em transporte (coletores):  %d\n", carregando);
+    printf("  entregues nos pontos D:       %d\n", stats.pacotes_entregues);
+    printf("  atualmente na esteira:        %d\n", esteira_total(&esteira));
+    printf("  aguardando nas estações:      %d\n", aguardando);
+    printf("  em transporte (coletores):    %d\n", carregando_col);
+    printf("  em transporte (entregadores): %d\n", carregando_ent);
 
-    if (esteira_total(&esteira) > 0 || carregando > 0) {
-        printf("\nfluxo estanca sem os entregadores drenando o out (Issue #8).\n");
+    if (stats.pacotes_entregues >= cenario->total_pacotes) {
+        printf("\ntodos os %d pacotes foram entregues nos pontos D.\n",
+               cenario->total_pacotes);
+    } else {
+        printf("\nfluxo incompleto: %d de %d pacotes entregues.\n",
+               stats.pacotes_entregues, cenario->total_pacotes);
     }
 
     for (int i = 0; i < cenario->num_estacoes; i++) {
