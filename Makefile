@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g -Iinclude -MMD -MP
+CFLAGS = -Wall -Wextra -g -Iinclude -MMD -MP -pthread
 LDLIBS = -lncurses
 
 SRC = $(wildcard src/*.c)

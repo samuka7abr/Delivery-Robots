@@ -7,11 +7,10 @@
 #include "esteira.h"
 #include "robo.h"
 
-/* Robô coletor sequencial: retira pacotes das estações P e os leva até a
- * entrada (in) da esteira, carregando no máximo um pacote por vez. Ainda sem
- * thread própria — cada chamada a coletor_passo executa um único passo do
- * ciclo (escolher estação, andar uma célula, coletar ou inserir). A thread e a
- * sincronização entram na Issue #9. */
+/* Robô coletor: retira pacotes das estações P e os leva até a entrada (in)
+ * da esteira, carregando no máximo um pacote por vez. Roda em thread própria
+ * (main.c); cada chamada a coletor_passo executa um único passo do ciclo
+ * (escolher estação, andar uma célula, coletar ou inserir) */
 
 typedef enum {
     COLETOR_OCIOSO,        /* sem pacote: procurando uma estação com pacote */
@@ -24,6 +23,7 @@ typedef struct {
     EstadoColetor estado;
     int estacao_alvo;   /* índice da estação buscada (válido fora de OCIOSO) */
     Posicao entrada;    /* posição da entrada (in) da esteira no mapa */
+    Posicao base;       /* posição de espera; recua para cá quando sem trabalho */
 } Coletor;
 
 /* Desfecho de um passo do coletor. */
@@ -40,8 +40,9 @@ typedef enum {
  * robo_inicializar, tipo ROBO_COLETOR) e da posição da entrada da esteira. */
 void coletor_inicializar(Coletor *coletor, Robo *robo, Posicao entrada);
 
-/* Executa um passo do ciclo de coleta e retorna o desfecho. Sequencial, sem
- * lock — a sincronização entra na Issue #9. */
+/* Executa um passo do ciclo de coleta e retorna o desfecho. As estruturas
+ * compartilhadas que o passo acessa (mapa, estações, esteira) são protegidas
+ * pelos locks internos de cada módulo */
 ResultadoColeta coletor_passo(Coletor *coletor, Mapa *mapa, Estacao *estacoes,
                               int num_estacoes, Esteira *esteira);
 

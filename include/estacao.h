@@ -4,9 +4,10 @@
 #include "idp.h"
 
 /* Prepara a estação na posição dada, com a fila de coleta vazia.
- * O mutex da estação só é inicializado na Issue #9, com as threads. */
+ * e inicializa o mutex q protege a fila. */
 void estacao_inicializar(Estacao *estacao, Posicao posicao);
 
+void estacao_destruir(Estacao *estacao);
 bool estacao_fila_vazia(const Estacao *estacao);
 bool estacao_fila_cheia(const Estacao *estacao);
 

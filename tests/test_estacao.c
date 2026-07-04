@@ -47,6 +47,7 @@ static void teste_fila_fifo(void)
     }
     verificar(aceitos == MAX_FILA_ESTACAO, "fila aceita no máximo MAX_FILA_ESTACAO pacotes");
     verificar(estacao_fila_cheia(&e), "fila reporta cheia no limite");
+    estacao_destruir(&e);
 }
 
 static void teste_gerador(void)
@@ -93,6 +94,10 @@ static void teste_gerador(void)
         na_fila += estacoes[i].total;
     }
     verificar(na_fila == cenario->total_pacotes, "todos os pacotes ficam nas filas");
+
+    for (int i = 0; i < cenario->num_estacoes; i++) {
+        estacao_destruir(&estacoes[i]);
+    }
 
     mapa_destruir(mapa);
 }
@@ -154,6 +159,10 @@ static void teste_gerador_distingue_fim_de_fila_cheia(void)
     verificar(gerador_pacotes_restantes(&gerador) == 8,
               "restam pacotes por gerar (fim ≠ fila cheia)");
 
+    for (int i = 0; i < cenario.num_estacoes; i++) {
+        estacao_destruir(&estacoes[i]);
+    }
+
     mapa_destruir(mapa);
 }
 
@@ -189,6 +198,10 @@ static void teste_gerador_pula_estacao_cheia(void)
               "gera mesmo com a estação da vez cheia");
     verificar(p != NULL && p->estacao_origem == 1,
               "coloca o pacote na estação 1 (a que tem espaço)");
+
+    for (int i = 0; i < cenario.num_estacoes; i++) {
+        estacao_destruir(&estacoes[i]);
+    }
 
     mapa_destruir(mapa);
 }

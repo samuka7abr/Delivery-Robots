@@ -1,4 +1,6 @@
 #include <ncurses.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "interface.h"
 
@@ -11,6 +13,11 @@ enum {
     PAR_ESTEIRA,
     PAR_TITULO
 };
+
+static const char *LEGENDA_TITULO = "Legenda:";
+static const char *LEGENDA_CELULAS = "P estacao   D despacho";
+static const char *LEGENDA_ROBOS = "C coletor   E entregador";
+static const char *LEGENDA_MAPA = "o pacote   . livre   # parede";
 
 char interface_simbolo_celula(TipoCelula tipo)
 {
@@ -28,10 +35,11 @@ char interface_simbolo_robo(TipoRobo tipo)
     return (tipo == ROBO_COLETOR) ? 'C' : 'E';
 }
 
-int interface_compor_mapa(const Mapa *mapa, const Robo *robos, int num_robos,
+int interface_compor_mapa(Mapa *mapa, const Robo *robos, int num_robos,
                           char *buffer, int tam)
 {
-    if (mapa == NULL || buffer == NULL || (num_robos > 0 && robos == NULL)) {
+    if (mapa == NULL || buffer == NULL || num_robos < 0 ||
+        num_robos > MAX_ROBOS || (num_robos > 0 && robos == NULL)) {
         return -1;
     }
 
@@ -40,6 +48,7 @@ int interface_compor_mapa(const Mapa *mapa, const Robo *robos, int num_robos,
         return -1;
     }
 
+    pthread_mutex_lock(&mapa->mutex);
     int pos = 0;
     for (int y = 0; y < mapa->altura; y++) {
         for (int x = 0; x < mapa->largura; x++) {
@@ -55,10 +64,11 @@ int interface_compor_mapa(const Mapa *mapa, const Robo *robos, int num_robos,
         buffer[pos++] = '\n';
     }
     buffer[pos] = '\0';
+    pthread_mutex_unlock(&mapa->mutex);
     return pos;
 }
 
-int interface_compor_esteira(const Esteira *esteira, char *buffer, int tam)
+int interface_compor_esteira(Esteira *esteira, char *buffer, int tam)
 {
     if (esteira == NULL || buffer == NULL) {
         return -1;
@@ -70,6 +80,7 @@ int interface_compor_esteira(const Esteira *esteira, char *buffer, int tam)
         return -1;
     }
 
+    pthread_mutex_lock(&esteira->mutex);
     int pos = 0;
     buffer[pos++] = 'I';
     buffer[pos++] = 'N';
@@ -82,15 +93,50 @@ int interface_compor_esteira(const Esteira *esteira, char *buffer, int tam)
     buffer[pos++] = 'U';
     buffer[pos++] = 'T';
     buffer[pos] = '\0';
+    pthread_mutex_unlock(&esteira->mutex);
     return pos;
 }
 
-static int par_da_celula(TipoCelula tipo)
+bool interface_dimensoes_minimas(const Mapa *mapa, const Esteira *esteira,
+                                 int *linhas, int *colunas)
 {
-    switch (tipo) {
-        case CELULA_ESTACAO_P: return PAR_ESTACAO;
-        case CELULA_PONTO_D:   return PAR_DESPACHO;
-        default:               return PAR_PADRAO;
+    if (mapa == NULL || esteira == NULL || linhas == NULL || colunas == NULL) {
+        return false;
+    }
+
+    size_t largura_painel = strlen(LEGENDA_CELULAS);
+    if (strlen(LEGENDA_ROBOS) > largura_painel) {
+        largura_painel = strlen(LEGENDA_ROBOS);
+    }
+    if (strlen(LEGENDA_MAPA) > largura_painel) {
+        largura_painel = strlen(LEGENDA_MAPA);
+    }
+
+    int largura_titulo = 46;
+    int largura_esteira = 16 + esteira->tamanho;
+    int largura_mapa_painel = mapa->largura + 3 + (int)largura_painel;
+    *colunas = largura_titulo;
+    if (largura_esteira > *colunas) {
+        *colunas = largura_esteira;
+    }
+    if (largura_mapa_painel > *colunas) {
+        *colunas = largura_mapa_painel;
+    }
+    *linhas = mapa->altura + 4;
+    if (*linhas < 11) {
+        *linhas = 11;
+    }
+    return true;
+}
+
+static void escrever_limitado(int y, int x, const char *texto)
+{
+    if (texto == NULL || y < 0 || y >= LINES || x < 0 || x >= COLS) {
+        return;
+    }
+    int limite = COLS - x - 1;
+    if (limite > 0) {
+        mvaddnstr(y, x, texto, limite);
     }
 }
 
@@ -115,9 +161,51 @@ void interface_iniciar(void)
     }
 }
 
-void interface_desenhar(const Mapa *mapa, const Robo *robos, int num_robos,
-                        const Esteira *esteira, const Estatisticas *stats)
+void interface_desenhar(Mapa *mapa, const Robo *robos, int num_robos,
+                        Esteira *esteira, Estatisticas *stats)
 {
+    if (mapa == NULL || esteira == NULL || stats == NULL ||
+        num_robos < 0 || num_robos > MAX_ROBOS ||
+        (num_robos > 0 && robos == NULL)) {
+        return;
+    }
+
+    int linhas_minimas;
+    int colunas_minimas;
+    interface_dimensoes_minimas(mapa, esteira,
+                                &linhas_minimas, &colunas_minimas);
+    if (LINES < linhas_minimas || COLS < colunas_minimas) {
+        char aviso[128];
+        erase();
+        snprintf(aviso, sizeof aviso,
+                 "Terminal pequeno: minimo %dx%d, atual %dx%d.",
+                 colunas_minimas, linhas_minimas, COLS, LINES);
+        escrever_limitado(0, 0, aviso);
+        escrever_limitado(2, 0,
+                          "Aumente o terminal. Pressione q para sair.");
+        refresh();
+        return;
+    }
+
+    char mapa_txt[4096];
+    char belt[3 + MAX_ESTEIRA + 4 + 1];
+    if (interface_compor_mapa(mapa, robos, num_robos,
+                              mapa_txt, sizeof mapa_txt) < 0 ||
+        interface_compor_esteira(esteira, belt, sizeof belt) < 0) {
+        return;
+    }
+
+    int aguardando;
+    int na_esteira;
+    int entregues;
+    double tempo;
+    pthread_mutex_lock(&stats->mutex);
+    aguardando = stats->pacotes_aguardando;
+    na_esteira = stats->pacotes_na_esteira;
+    entregues = stats->pacotes_entregues;
+    tempo = stats->tempo_execucao_seg;
+    pthread_mutex_unlock(&stats->mutex);
+
     erase();
 
     attron(COLOR_PAIR(PAR_TITULO));
@@ -128,15 +216,16 @@ void interface_desenhar(const Mapa *mapa, const Robo *robos, int num_robos,
     const int oy = 2;
     for (int y = 0; y < mapa->altura; y++) {
         for (int x = 0; x < mapa->largura; x++) {
-            char c = interface_simbolo_celula(mapa->celulas[y][x]);
-            int par = par_da_celula(mapa->celulas[y][x]);
-            for (int r = 0; r < num_robos; r++) {
-                if (robos[r].posicao.x == x && robos[r].posicao.y == y) {
-                    c = interface_simbolo_robo(robos[r].tipo);
-                    par = (robos[r].tipo == ROBO_COLETOR) ? PAR_COLETOR
-                                                          : PAR_ENTREGADOR;
-                    break;
-                }
+            char c = mapa_txt[y * (mapa->largura + 1) + x];
+            int par = PAR_PADRAO;
+            if (c == 'P') {
+                par = PAR_ESTACAO;
+            } else if (c == 'D') {
+                par = PAR_DESPACHO;
+            } else if (c == 'C') {
+                par = PAR_COLETOR;
+            } else if (c == 'E') {
+                par = PAR_ENTREGADOR;
             }
             attron(COLOR_PAIR(par));
             mvaddch(oy + y, x, c);
@@ -145,24 +234,21 @@ void interface_desenhar(const Mapa *mapa, const Robo *robos, int num_robos,
     }
 
     int ey = oy + mapa->altura + 1;
-    char belt[3 + MAX_ESTEIRA + 4 + 1];
     mvprintw(ey, 0, "Esteira: ");
-    if (interface_compor_esteira(esteira, belt, sizeof belt) > 0) {
-        attron(COLOR_PAIR(PAR_ESTEIRA));
-        mvprintw(ey, 9, "%s", belt);
-        attroff(COLOR_PAIR(PAR_ESTEIRA));
-    }
+    attron(COLOR_PAIR(PAR_ESTEIRA));
+    mvprintw(ey, 9, "%s", belt);
+    attroff(COLOR_PAIR(PAR_ESTEIRA));
 
     int px = mapa->largura + 3;
-    mvprintw(2, px, "Pacotes aguardando coleta : %d", stats->pacotes_aguardando);
-    mvprintw(3, px, "Pacotes na esteira        : %d", stats->pacotes_na_esteira);
-    mvprintw(4, px, "Pacotes entregues         : %d", stats->pacotes_entregues);
-    mvprintw(5, px, "Tempo de execucao (s)     : %.1f", stats->tempo_execucao_seg);
+    mvprintw(2, px, "Aguardando: %d", aguardando);
+    mvprintw(3, px, "Na esteira: %d", na_esteira);
+    mvprintw(4, px, "Entregues: %d", entregues);
+    mvprintw(5, px, "Tempo: %.1f s", tempo);
 
-    mvprintw(7, px,  "Legenda:");
-    mvprintw(8, px,  "P estacao de coleta   D ponto de despacho");
-    mvprintw(9, px,  "C robo coletor        E robo entregador");
-    mvprintw(10, px, "o pacote na esteira   . livre   # parede");
+    mvprintw(7, px,  "%s", LEGENDA_TITULO);
+    mvprintw(8, px,  "%s", LEGENDA_CELULAS);
+    mvprintw(9, px,  "%s", LEGENDA_ROBOS);
+    mvprintw(10, px, "%s", LEGENDA_MAPA);
 
     refresh();
 }

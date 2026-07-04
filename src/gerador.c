@@ -19,6 +19,9 @@ bool gerador_inicializar(Gerador *gerador, const Cenario *cenario,
         };
         if (!mapa_dentro_limites(mapa, p) ||
             mapa->celulas[p.y][p.x] != CELULA_LIVRE) {
+	    for (int j = 0; j < i; j++) {
+                estacao_destruir(&estacoes[j]);
+            }
             return false;
         }
         estacao_inicializar(&estacoes[i], p);

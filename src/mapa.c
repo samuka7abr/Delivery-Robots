@@ -46,8 +46,7 @@ Mapa *mapa_criar(int largura, int altura)
         }
     }
 
-    /* mapa->mutex é inicializado ao introduzir as threads (Issue #9);
-     * nesta etapa sequencial o mapa é acessado por uma única linha de execução. */
+    pthread_mutex_init(&mapa->mutex, NULL);
     return mapa;
 }
 
@@ -64,6 +63,7 @@ void mapa_destruir(Mapa *mapa)
     free(mapa->celulas);
     free(mapa->ocupada);
 
+    pthread_mutex_destroy(&mapa->mutex);
     free(mapa);
 }
 
@@ -92,16 +92,28 @@ bool mapa_celula_livre(const Mapa *mapa, Posicao p)
     return !mapa->ocupada[p.y][p.x];
 }
 
-void mapa_ocupar(Mapa *mapa, Posicao p)
-{
-    if (mapa_dentro_limites(mapa, p)) {
-        mapa->ocupada[p.y][p.x] = true;
-    }
-}
+
 
 void mapa_liberar(Mapa *mapa, Posicao p)
 {
-    if (mapa_dentro_limites(mapa, p)) {
-        mapa->ocupada[p.y][p.x] = false;
+    if (mapa == NULL || !mapa_dentro_limites(mapa, p)) {
+        return;
     }
+    pthread_mutex_lock(&mapa->mutex);
+    mapa->ocupada[p.y][p.x] = false;
+    pthread_mutex_unlock(&mapa->mutex);
+}
+
+bool mapa_tentar_ocupar(Mapa *mapa, Posicao p)
+{
+    if (mapa == NULL) {
+        return false;
+    }
+    pthread_mutex_lock(&mapa->mutex);
+    bool livre = mapa_celula_livre(mapa, p);
+    if (livre) {
+        mapa->ocupada[p.y][p.x] = true;
+    }
+    pthread_mutex_unlock(&mapa->mutex);
+    return livre;
 }

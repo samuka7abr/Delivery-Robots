@@ -7,7 +7,9 @@ Trabalho prático de Programação Concorrente (IDP) — simulação de um centr
 - Linux (testado em Ubuntu 24.04)
 - gcc
 - make
-- libncurses-dev (interface de acompanhamento)
+- ncurses (interface de acompanhamento):
+  - Ubuntu: `sudo apt install libncurses-dev`
+  - Fedora: `sudo dnf install ncurses-devel`
 
 ## Build
 
@@ -23,7 +25,8 @@ Gera o executável em `build/idp`.
 make run
 ```
 
-ou diretamente, escolhendo o cenário (0 a 2):
+Em um terminal interativo, o programa mostra os três cenários e solicita a
+escolha. Também é possível selecionar diretamente pelo índice:
 
 ```bash
 ./build/idp 1
